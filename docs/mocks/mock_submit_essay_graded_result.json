@@ -1,0 +1,28 @@
+{
+  "attemptId": 45,
+  "quizId": 15,
+  "completedAt": "2026-09-11T17:20:04.5127716Z",
+  "totalQuestions": 4,
+  "autoGradedQuestions": 3,
+  "pendingEssayQuestions": 0,
+  "essayResults": [
+    {
+      "questionId": 104,
+      "status": "Graded",
+      "awardedPoints": 2,
+      "maxPoints": 3,
+      "feedback": "إجابة جميلة! اذكر كمان إن الدائرة لازم تكون مقفولة عشان التيار يمشي."
+    }
+  ],
+  "correctAnswers": 3,
+  "wrongAnswers": 0,
+  "scorePercentage": 100,
+  "totalPoints": 8,
+  "earnedPoints": 7,
+  "pendingPoints": 0,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "hintsStatus": "NotRequired",
+  "retryQuestions": [],
+  "placement": null
+}

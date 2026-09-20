@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1,
+    "name": "أساسيات الكهرباء",
+    "sortOrder": 1,
+    "isActive": true,
+    "topicsCount": 3,
+    "translations": [
+      { "languageCode": "ar", "name": "أساسيات الكهرباء" },
+      { "languageCode": "en", "name": "Electricity basics" }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "المكونات الإلكترونية",
+    "sortOrder": 2,
+    "isActive": true,
+    "topicsCount": 3,
+    "translations": [
+      { "languageCode": "ar", "name": "المكونات الإلكترونية" },
+      { "languageCode": "en", "name": "Electronic components" }
+    ]
+  }
+]

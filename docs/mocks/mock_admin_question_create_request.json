@@ -1,0 +1,11 @@
+{
+  "quizId": 15,
+  "topicId": 3,
+  "questionText": "أي مكوّن يظهر في الصورة؟",
+  "questionType": "MultipleChoice",
+  "imageUrl": "/uploads/lessons/8f1c2b3a-6b4d-4e2a-9c1f-3d7e5a2b1c0d.png",
+  "imageDescription": "صورة لمكوّن إلكتروني صغير أسطواني بلون بيج عليه أربع حلقات ملونة (أحمر، أحمر، بني، ذهبي) وله سلكان معدنيان من الطرفين.",
+  "difficulty": "Medium",
+  "displayOrder": 3,
+  "points": 2
+}

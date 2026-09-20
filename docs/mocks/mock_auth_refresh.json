@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "message": "تم تجديد التوكن بنجاح",
+  "data": {
+    "userId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "fullName": "Ahmed Ali",
+    "role": "Parent",
+    "authProvider": "Email",
+    "age": null,
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.rotated.access.token",
+    "refreshToken": "7v/dfVQL2fWHw+cuQd/ju7r39QNwxX4kVg3xpps4WRSv2ACQIExR28i3uM8ng+ZkD8FK37u10rVBl9+GE7jkkQ==",
+    "accessTokenExpiresAt": "2026-09-10T13:15:00.8842105Z"
+  }
+}

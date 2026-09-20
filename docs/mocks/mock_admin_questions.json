@@ -1,0 +1,42 @@
+[
+  {
+    "id": 101,
+    "quizId": 15,
+    "topicId": 3,
+    "questionText": "ما هو الجهد الكهربي؟",
+    "questionType": "MultipleChoice",
+    "imageUrl": null,
+    "imageDescription": null,
+    "difficulty": "Easy",
+    "displayOrder": 1,
+    "points": 1,
+    "isActive": true,
+    "createdAt": "2026-08-10T09:05:00",
+    "options": [
+      {
+        "id": 1001,
+        "optionText": "فرق الجهد بين نقطتين",
+        "imageUrl": null,
+        "imageDescription": null,
+        "isCorrect": true,
+        "displayOrder": 1
+      },
+      {
+        "id": 1002,
+        "optionText": "مقاومة مرور التيار",
+        "imageUrl": null,
+        "imageDescription": null,
+        "isCorrect": false,
+        "displayOrder": 2
+      },
+      {
+        "id": 1003,
+        "optionText": "شدة التيار المار",
+        "imageUrl": null,
+        "imageDescription": null,
+        "isCorrect": false,
+        "displayOrder": 3
+      }
+    ]
+  }
+]

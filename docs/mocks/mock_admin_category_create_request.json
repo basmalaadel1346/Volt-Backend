@@ -1,0 +1,8 @@
+{
+  "name": "القياسات الكهربية",
+  "sortOrder": 3,
+  "translations": [
+    { "languageCode": "ar", "name": "القياسات الكهربية" },
+    { "languageCode": "en", "name": "Electrical measurements" }
+  ]
+}

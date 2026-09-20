@@ -1,0 +1,32 @@
+{
+  "id": 105,
+  "quizId": 15,
+  "topicId": null,
+  "questionText": "ارتبط اسم العالِم توماس إديسون بتطوير المصباح الكهربي.",
+  "questionType": "TrueFalse",
+  "imageUrl": null,
+  "imageDescription": null,
+  "difficulty": "Easy",
+  "displayOrder": 5,
+  "points": 1,
+  "isActive": true,
+  "createdAt": "2026-09-12T10:30:00",
+  "options": [
+    {
+      "id": 1009,
+      "optionText": "صح",
+      "imageUrl": null,
+      "imageDescription": null,
+      "isCorrect": true,
+      "displayOrder": 1
+    },
+    {
+      "id": 1010,
+      "optionText": "خطأ",
+      "imageUrl": null,
+      "imageDescription": null,
+      "isCorrect": false,
+      "displayOrder": 2
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-# ElectroWorld Frontend API Reference
+﻿# ElectroWorld Frontend API Reference
 
 This document is the contract between the ElectroWorld backend (ASP.NET Core 8, `ElectroWorld` host) and its clients: the Child app, the Parent app (Flutter) and the Admin dashboard. It lists every HTTP endpoint the backend exposes. For each one it gives the exact request and response JSON, every error with its real (Arabic) message, and notes on how a client should call it. Everything here was read from the code (controllers, DTOs, services, `ExceptionMiddleware`, `Program.cs`) and reflects the server's actual behavior. Code is referenced by file and class/method name. Samples under `docs/mocks/` are illustrations only; where a mock and this document disagree, this document (and the code behind it) wins.
 
@@ -14,12 +14,17 @@ This document is the contract between the ElectroWorld backend (ASP.NET Core 8, 
    - [Dates, ids and numbers](#dates-ids-and-numbers)
    - [Pagination](#pagination)
    - [Validation errors (framework 400)](#validation-errors-framework-400)
+   - [Response caching](#response-caching)
    - [Status codes](#status-codes)
 2. [Endpoint index](#endpoint-index)
 3. [Auth & Users](#auth--users)
 4. [Content](#content)
 5. [Assessment (learner)](#assessment-learner)
 6. [Assessment (admin)](#assessment-admin)
+7. [Gamification](#gamification)
+8. [Real-time updates (SignalR)](#real-time-updates-signalr)
+9. [Typical frontend flows](#typical-frontend-flows)
+10. [Changes in this release (breaking for clients)](#changes-in-this-release-breaking-for-clients)
 
 ---
 
@@ -39,7 +44,8 @@ This document is the contract between the ElectroWorld backend (ASP.NET Core 8, 
 | `/api/content/levels`, `/api/content/lessons`, `/api/content/contents` | `LevelsController`, `LessonsController`, `LessonContentsController` | Content |
 | `/api/content/media` | `MediaController` | Content |
 | `/api/placement` | `PlacementController` | Assessment (learner) |
-| `/api/quizzes/for-lesson/{lessonId}` | `LessonQuizController` | Assessment (learner) |
+| `/api/level-skip` | `LevelSkipController` | Assessment (learner) |
+| `/api/quizzes/for-lesson/{lessonId}`, `/api/quizzes/for-level/{levelId}` | `LessonQuizController` | Assessment (learner) |
 | `/api/quiz-attempts` | `QuizAttemptController` | Assessment (learner) |
 | `/api/user-topic-stats` | `UserTopicStatController` | Assessment (learner) |
 | `/api/quizzes` | `QuizController` | Assessment (admin) |
@@ -47,6 +53,8 @@ This document is the contract between the ElectroWorld backend (ASP.NET Core 8, 
 | `/api/question-options` | `QuestionOptionController` | Assessment (admin) |
 | `/api/assessment/categories` | `AssessmentCategoryController` | Assessment (admin) |
 | `/api/assessment/topics` | `AssessmentTopicController` | Assessment (admin) |
+| `/api/gamification` | `GamificationController` | Gamification |
+| `/hubs/learner` | `LearnerHub` (SignalR, not a controller) | Real-time |
 
 - **Route constraints.** Path ids are declared as `{id:int}` or `{attemptId:long}`; an Assessment category id is `{categoryId:int:range(1,255)}`. A segment that is not a number, or a category id outside 1–255, matches no route: the response is a **404 with an empty body** (not the envelope).
 - **Uploaded images** are static files under `/uploads/lessons/<guid>.<ext>` (`UseStaticFiles`). They are served **without authentication**. Every `imageUrl` / `mediaUrl` in the API is a server-relative path, so prefix it with the API origin to display it.
@@ -55,12 +63,18 @@ This document is the contract between the ElectroWorld backend (ASP.NET Core 8, 
 
 ### JSON
 
-- Serialization is System.Text.Json with the **web defaults** (MVC defaults and `new JsonSerializerOptions(JsonSerializerDefaults.Web)` in `ExceptionMiddleware` and `ApiResponseAuthWriter`). No API DTO has a `[JsonPropertyName]` attribute or a custom converter, and no `AddJsonOptions` call changes the defaults. In practice:
+- Serialization is System.Text.Json with the **web defaults**, plus one deliberate change in `Program.cs` (`DefaultIgnoreCondition = WhenWritingNull`). In practice:
   - Response property names are **camelCase** (`attemptId`, `scorePercentage`).
   - Request property names are matched **case-insensitively**; unknown properties are ignored.
   - Numbers may also be sent as numeric strings (`"15"`).
-  - `null` values are **written**, not omitted: an optional field is present with `null`.
-- String "enums" (`quizType`, `questionType`, `difficulty`, `status`, `hintsStatus`, `role`, `authProvider`) are plain strings, not JSON enums. Values the server validates are **case-sensitive** unless an endpoint says otherwise.
+  - **`null` values are omitted from responses.** ⚠️ **Changed in this release.** A field that has no value is **absent from the JSON**, not present as `null`. `"imageUrl": null` used to be written; now the key simply is not there.
+
+    **What a client must do:** treat an ABSENT field exactly as it treated `null`. In Dart, `json['imageUrl']` on a missing key returns `null`, so code that reads a nullable field through the subscript operator keeps working unchanged; code that asserts a key exists (`json.containsKey`, `!`-assertions, a non-nullable field in a generated model) must be relaxed. Collections are still always written — an empty list is a fact, not an absence — and no non-nullable field can disappear.
+
+    Every example in this document is written the new way: if you do not see a key in an example, it was null.
+- String "enums" (`quizType`, `questionType`, `difficulty`, `learningLevel`, `status`, `hintsStatus`, `role`, `authProvider`) are plain strings, not JSON enums.
+  - **Values the server validates are now matched case-insensitively.** ⚠️ **Changed in this release.** `"multiplechoice"`, `"MultipleChoice"` and `"MULTIPLECHOICE"` are all accepted, and surrounding whitespace is trimmed. Previously only `learningLevel` was flexible and every other field was strictly case-sensitive, so `"multiplechoice"` was rejected by one field and accepted by another with no way to tell which from the outside.
+  - **Responses always carry the canonical spelling** (`MultipleChoice`), which is what to compare against. An error message now lists the allowed values, e.g. `نوع السؤال 'mcq' غير صالح (MultipleChoice | TrueFalse | Essay)`.
 - Messages (`message`) of envelopes and errors are always Arabic, whatever language the client asks for. The one exception is the encouraging `message` text of the progress map (`GET /api/user-topic-stats` and `GET /api/user-topic-stats/{topicId}`), which is English when the resolved language is `en`.
 
 ### Response shapes
@@ -99,11 +113,11 @@ A `201 Created` carries a `Location` header. A `204 No Content` has no body.
 
 (`المحاولة رقم 42 غير موجودة` = "attempt 42 does not exist".) Failures that Auth, Users and Content controllers build themselves use the same keys. When they are built with the non-generic `ApiResponse`, the `data` key is absent.
 
-**4. ASP.NET Core ProblemDetails.** The framework writes these without going through the envelope: model-validation 400s ([below](#validation-errors-framework-400)). A 415 Unsupported Media Type is also written by the framework and never uses the envelope. No endpoint returns a bare `NotFound()` any more: the only one, `GET /api/user-topic-stats/{topicId}/{difficulty}`, was removed in this release.
+**4. Framework responses outside the envelope.** Only **415 Unsupported Media Type** remains, and its body may be empty. Model-validation 400s used to be here as `ValidationProblemDetails`; they now use the error envelope ([below](#validation-errors-framework-400)).
 
-**Suggested decoding.** If the body is empty, use the status alone. If it has a boolean `success`, it is an envelope: read `message`, and `data` when present. If it has `title` and `status`, it is ProblemDetails. Otherwise, on a 2xx from an Assessment endpoint, it is the DTO.
+**Suggested decoding.** If the body is empty, use the status alone. If it has a boolean `success`, it is an envelope: read `message`, and `data` when present. Otherwise, on a 2xx from an Assessment or Gamification endpoint, it is the DTO.
 
-Mocks for the shared error bodies: `docs/mocks/mock_unauthorized.json` (401), `docs/mocks/mock_forbidden.json` (403), `docs/mocks/mock_server_error.json` (500) and `docs/mocks/mock_validation_error.json` (framework 400).
+Mocks for the shared error bodies: `docs/mocks/mock_unauthorized.json` (401), `docs/mocks/mock_forbidden.json` (403), `docs/mocks/mock_server_error.json` (500) and `docs/mocks/mock_validation_error.json` (framework 400 — updated to the envelope).
 
 ### Authentication and sessions
 
@@ -179,17 +193,33 @@ Every other list endpoint returns the full list.
 
 ### Validation errors (framework 400)
 
-`[ApiController]` validates the request before the action runs, and `Program.cs` registers **no** custom `InvalidModelStateResponseFactory`. Validation failures therefore return ASP.NET Core's **`ValidationProblemDetails`**, not the envelope. In the endpoint tables this is written **400 (framework)** or "400 `ValidationProblemDetails`".
+⚠️ **Changed in this release: these now use the envelope like every other error.**
+
+`[ApiController]` validates the request before the action runs. It used to answer with ASP.NET Core's `ValidationProblemDetails` — a body with `title`, `status` and `errors` and **no `success` field** — while every other error in the API used the envelope. A client interceptor that reads `response.success` therefore crashed on exactly the responses a developer meets most while still getting a request right.
+
+`Program.cs` now registers an `InvalidModelStateResponseFactory` (`ElectroWorld/Api/ApiBehaviorConfiguration.cs`) that writes the standard envelope instead, naming the fields that failed:
 
 ```json
 {
-  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
-  "title": "One or more validation errors occurred.",
-  "status": 400,
-  "traceId": "00-8f1c2b3a6b4d4e2a9c1f3d7e5a2b1c0d-1a2b3c4d5e6f7a8b-00",
-  "errors": { "quizId": [ "The value 'abc' is not valid." ] }
+  "success": false,
+  "message": "بيانات الطلب غير صحيحة في الحقول: quizId",
+  "data": null
 }
 ```
+
+A body that could not be parsed at all (malformed JSON) has no field to name, so it reads:
+
+```json
+{
+  "success": false,
+  "message": "صيغة الطلب غير صحيحة، تأكد من إرسال JSON صالح بالحقول المطلوبة",
+  "data": null
+}
+```
+
+**There is now exactly one error shape in the whole API.** The tables below still label these **400 (framework)**, because the *cause* is model binding rather than a business rule — but the body is the envelope either way, and a client no longer needs a special case.
+
+The one framework response still outside the envelope is **415 Unsupported Media Type**, which is written before MVC gets involved.
 
 What triggers it:
 
@@ -203,21 +233,37 @@ What does **not** trigger it: a *missing* `int`, `short`, `byte` or `bool` prope
 
 Business-rule failures detected by services are **400 with the envelope** and a specific Arabic message.
 
+### Response caching
+
+`Program.cs` enables ASP.NET Core **output caching**, applied per endpoint rather than globally, with two policies (`ElectroWorld/Api/ResponseCachingPolicies.cs`):
+
+| Policy | Duration | Varies by | Used on |
+|---|---|---|---|
+| `PublicContent` | 60 s | `Accept-Language`, and the query keys `language`, `levelId`, `lessonId`, `isActive`, `pageNumber`, `pageSize`, `quizType` | `GET /api/content/levels`, `GET /api/content/levels/{id}`, `GET /api/quizzes/for-lesson/{lessonId}`, `GET /api/quizzes/for-level/{levelId}` |
+| `PerLearner` | 15 s | `Authorization`, `Accept-Language`, `language` | `GET /api/gamification/me`, `GET /api/gamification/shop` |
+
+What this means for a client:
+
+- **Nothing personal is shared.** The per-learner policy varies on the `Authorization` header, and the cache runs **after** authentication, so one child's response can never be served to another. Endpoints that depend on the caller but are not listed above — attempts, results, progress, placement — are **not cached at all**.
+- **An admin's edit can take up to 60 seconds to appear** on the cached catalogue reads. That is the deliberate trade: those reads are identical for everyone and get hit by a whole class opening the app at once.
+- **A write is never cached**, and no endpoint that changes state is affected.
+- If a screen must show an edit immediately after making it (an admin dashboard right after `PUT /api/content/levels/{id}`), read it back from an uncached endpoint, or accept the delay.
+
 ### Status codes
 
 | Status | Body | When |
 |---|---|---|
 | 200 OK | Envelope (Auth, Users, Content) or bare DTO (Assessment) | Success. |
-| 201 Created | Bare DTO + `Location` | `POST /api/quiz-attempts`, `POST /api/quizzes`, `POST /api/questions`, `POST /api/question-options`, `POST /api/assessment/categories`, `POST /api/assessment/topics`. |
+| 201 Created | Bare DTO + `Location` | `POST /api/quiz-attempts` (also when it RESUMES an open attempt — see `resumed`), `POST /api/quizzes`, `POST /api/questions`, `POST /api/question-options`, `POST /api/assessment/categories`, `POST /api/assessment/topics`. |
 | 204 No Content | Empty | `PATCH /api/quizzes/{quizId}/active`, `PATCH /api/questions/{questionId}/active`, `DELETE /api/question-options/{optionId}`, `PATCH /api/assessment/categories/{categoryId}/active`, `PATCH /api/assessment/topics/{topicId}/active`. |
 | 400 Bad Request | Envelope | `BusinessRuleException` or `ArgumentException` from a service. Also `Result` failures that Users and Content controllers map to 400, including some "not found" cases there. |
-| 400 Bad Request | `ValidationProblemDetails` | Model binding / validation ([above](#validation-errors-framework-400)). |
+| 400 Bad Request | Envelope | Model binding / validation ([above](#validation-errors-framework-400)). Since this release these use the envelope too. |
 | 401 Unauthorized | Envelope, `غير مصرح لك بالوصول` | Missing, invalid or expired token. Login and refresh failures also return 401, with their own messages. |
-| 403 Forbidden | Envelope, `ليس لديك صلاحية` | **Only** a role restriction. |
+| 403 Forbidden | Envelope | A role restriction (`ليس لديك صلاحية`) **or** a locked lesson: `GET /api/content/lessons/{id}` returns 403 with the lesson-gate message when a `Child` has not yet passed the previous lesson's quiz. |
 | 404 Not Found | Envelope | `KeyNotFoundException`, including **another user's attempt**. Also not-found results of some Users and Content GETs. |
 | 404 Not Found | Empty | No route matched (for example a non-numeric id, or a category id outside 1–255). |
 | 409 Conflict | Envelope | `ConflictException`: state conflicts, lost races, already placed, hints exhausted, attempt not submitted yet. |
-| 410 Gone | Envelope | `GoneException`: the attempt expired before it was submitted. |
+| 410 Gone | Envelope | `GoneException`: the attempt expired before it was submitted, **or** a timed quiz (the level-skip challenge) ran out of time. |
 | 415 Unsupported Media Type | Framework response, not the envelope (the body may be empty) | `POST /api/quiz-attempts/{attemptId}/submit` without `Content-Type: application/json`. |
 | 500 Internal Server Error | Envelope, `حدث خطأ داخلي في الخادم` ("an internal server error occurred") | Any other exception, including `InvalidOperationException` and EF Core `DbUpdateException` (for example a string longer than its column). The internal message is never sent. |
 
@@ -227,7 +273,7 @@ The exception mapping lives in `ExceptionMiddleware.MapStatusCode`. For 4xx, the
 
 ## Endpoint index
 
-Every controller action in `ElectroWorld/Controllers`, once each (66 endpoints). Auth values:
+Every controller action in `ElectroWorld/Controllers`, once each (**80 endpoints**). Auth values:
 
 - **Anonymous:** no token needed.
 - **Any signed-in:** any valid access token, whatever the role.
@@ -258,25 +304,25 @@ Click a route to jump to its section.
 | 16 | Content | `POST` | [`/api/content/levels`](#create-level) | Admin | Create a level |
 | 17 | Content | `PUT` | [`/api/content/levels/{id}`](#update-level) | Admin | Update a level's title and description |
 | 18 | Content | `DELETE` | [`/api/content/levels/{id}`](#delete-level) | Admin | Delete a level that has no lessons |
-| 19 | Content | `POST` | [`/api/content/levels/swap-order`](#swap-level-order) | Admin | Swap the order of two levels |
+| 19 | Content | `POST` | [`/api/content/levels/swap-order`](#swap-level-order) | Admin | ⚠️ **Deprecated** (not idempotent). Swap the order of two levels |
 | 20 | Content | `GET` | [`/api/content/levels/{levelId}/lessons`](#list-lessons-of-a-level) | Any signed-in | List a level's lessons (drafts included) |
-| 21 | Content | `GET` | [`/api/content/lessons/{id}`](#get-lesson-detail) | Any signed-in | Get a lesson with its content items |
+| 21 | Content | `GET` | [`/api/content/lessons/{id}`](#get-lesson-detail) | Any signed-in | Get a lesson with its content items — **403 for a `Child` while the lesson is locked** |
 | 22 | Content | `POST` | [`/api/content/lessons`](#create-lesson) | Admin | Create a draft lesson |
 | 23 | Content | `PUT` | [`/api/content/lessons/{id}`](#update-lesson) | Admin | Update a lesson or move it to another level |
 | 24 | Content | `PATCH` | [`/api/content/lessons/{id}/publish`](#publish--unpublish-lesson) | Admin | Publish or hide a lesson |
 | 25 | Content | `DELETE` | [`/api/content/lessons/{id}`](#delete-lesson) | Admin | Delete a lesson and its content items |
-| 26 | Content | `POST` | [`/api/content/lessons/swap-order`](#swap-lesson-order) | Admin | Swap two lessons of the same level |
+| 26 | Content | `POST` | [`/api/content/lessons/swap-order`](#swap-lesson-order) | Admin | ⚠️ **Deprecated** (not idempotent). Swap two lessons of the same level |
 | 27 | Content | `POST` | [`/api/content/lessons/{lessonId}/contents`](#add-lesson-content-item) | Admin | Add a content item to a lesson |
 | 28 | Content | `PUT` | [`/api/content/contents/{contentId}`](#update-lesson-content-item) | Admin | Update a content item |
 | 29 | Content | `DELETE` | [`/api/content/contents/{contentId}`](#delete-lesson-content-item) | Admin | Delete a content item |
-| 30 | Content | `POST` | [`/api/content/contents/swap-order`](#swap-lesson-content-order) | Admin | Swap two content items of the same lesson |
+| 30 | Content | `POST` | [`/api/content/contents/swap-order`](#swap-lesson-content-order) | Admin | ⚠️ **Deprecated** (not idempotent). Swap two content items of the same lesson |
 | 31 | Content | `POST` | [`/api/content/media/images`](#upload-image) | Admin | Upload an image (lesson content, question, option) and get its URL |
 | 32 | Assessment (learner) | `GET` | [`/api/placement`](#placement-status) | Child | The caller's placement status and result |
 | 33 | Assessment (learner) | `POST` | [`/api/placement/start`](#start-or-resume-placement-test) | Child | Start or resume the placement test |
-| 34 | Assessment (learner) | `GET` | [`/api/quizzes/for-lesson/{lessonId}`](#lesson-quiz-preview) | Any signed-in | Preview a published lesson's quiz |
-| 35 | Assessment (learner) | `POST` | [`/api/quiz-attempts?quizId=&previousAttemptId=`](#start-attempt-first-attempt-or-retry) | Any signed-in | Start an attempt, or retry the wrong answers of a finished one |
+| 34 | Assessment (learner) | `GET` | [`/api/quizzes/for-lesson/{lessonId}`](#lesson-quiz-preview) | Any signed-in | A published lesson's quiz **summary** (no questions any more) |
+| 35 | Assessment (learner) | `POST` | [`/api/quiz-attempts?quizId=&previousAttemptId=`](#start-attempt-first-attempt-or-retry) | Any signed-in | Start an attempt (or **resume** the open one), or retry the wrong answers of a finished one |
 | 36 | Assessment (learner) | `GET` | [`/api/quiz-attempts/{attemptId}`](#get-attempt-resume) | Any signed-in (own attempts) | Redraw an attempt (resume) |
-| 37 | Assessment (learner) | `POST` | [`/api/quiz-attempts/{attemptId}/submit`](#submit-attempt) | Any signed-in (own attempts) | Submit every answer and get the result |
+| 37 | Assessment (learner) | `POST` | [`/api/quiz-attempts/{attemptId}/submit`](#submit-attempt) | Any signed-in (own attempts) | Submit every answer and get the result **immediately** (AI runs afterwards) |
 | 38 | Assessment (learner) | `GET` | [`/api/quiz-attempts/{attemptId}/result`](#get-saved-result-recovery-and-essay-polling) | Any signed-in (own attempts) | Saved result: recovery and essay polling |
 | 39 | Assessment (learner) | `GET` | [`/api/quiz-attempts/latest`](#get-latest-result) | Any signed-in (own attempts) | Result of the caller's most recently completed attempt |
 | 40 | Assessment (learner) | `POST` | [`/api/quiz-attempts/{attemptId}/questions/{questionId}/hint`](#hint-button) | Any signed-in (own attempts) | Hint button (escalating levels) |
@@ -284,9 +330,9 @@ Click a route to jump to its section.
 | 42 | Assessment (learner) | `GET` | [`/api/user-topic-stats/{topicId}?language=`](#one-topics-progress) | Any signed-in | The caller's progress in one topic, with a breakdown per difficulty |
 | 43 | Assessment (admin) | `GET` | [`/api/quizzes/{quizId}`](#get-quiz-by-id) | Admin | Get a quiz |
 | 44 | Assessment (admin) | `GET` | [`/api/quizzes`](#list-quizzes-paged) | Admin | List quizzes with filters (paged) |
-| 45 | Assessment (admin) | `POST` | [`/api/quizzes`](#create-quiz) | Admin | Create a quiz (always active) |
+| 45 | Assessment (admin) | `POST` | [`/api/quizzes`](#create-quiz) | Admin | Create a quiz — **as a draft** (`isActive: false`) |
 | 46 | Assessment (admin) | `PUT` | [`/api/quizzes/{quizId}`](#update-quiz) | Admin | Replace a quiz's title, description and active flag |
-| 47 | Assessment (admin) | `PATCH` | [`/api/quizzes/{quizId}/active?isActive=`](#activate--deactivate-quiz) | Admin | Activate or deactivate a quiz |
+| 47 | Assessment (admin) | `PATCH` | [`/api/quizzes/{quizId}/active?isActive=`](#activate--deactivate-quiz) | Admin | Publish or unpublish a quiz — **retires the incumbent automatically** |
 | 48 | Assessment (admin) | `GET` | [`/api/questions?quizId=`](#list-questions-of-a-quiz) | Admin | List a quiz's questions with options and answer key |
 | 49 | Assessment (admin) | `GET` | [`/api/questions/{questionId}`](#get-question-by-id) | Admin | Get a question with its options |
 | 50 | Assessment (admin) | `POST` | [`/api/questions`](#create-question) | Admin | Create a question (inactive) |
@@ -306,6 +352,24 @@ Click a route to jump to its section.
 | 64 | Assessment (admin) | `POST` | [`/api/assessment/topics`](#create-assessment-topic) | Admin | Create a topic (active) in an existing category |
 | 65 | Assessment (admin) | `PUT` | [`/api/assessment/topics/{topicId}`](#update-assessment-topic) | Admin | Replace a topic and (when sent) its translations |
 | 66 | Assessment (admin) | `PATCH` | [`/api/assessment/topics/{topicId}/active?isActive=`](#activate--deactivate-assessment-topic) | Admin | Activate or deactivate a topic |
+| 67 | Content | `PUT` | [`/api/content/levels/order`](#reorder-levels) | Admin | ✨ Set the order of every level from one absolute list (idempotent) |
+| 68 | Content | `PUT` | [`/api/content/levels/{levelId}/lessons/order`](#reorder-lessons) | Admin | ✨ Set the order of a level's lessons from one absolute list (idempotent) |
+| 69 | Content | `PUT` | [`/api/content/lessons/{lessonId}/contents/order`](#reorder-lesson-contents) | Admin | ✨ Set the order of a lesson's content items (idempotent) |
+| 70 | Content | `GET` | [`/api/content/lessons/{lessonId}/access`](#lesson-access-is-this-lesson-unlocked) | Any signed-in | ✨ Is this lesson unlocked, and if not, what unlocks it |
+| 71 | Content | `GET` | [`/api/content/levels/{levelId}/access`](#level-access-the-whole-lesson-list-at-once) | Any signed-in | ✨ The lock state of every lesson of a level, in one call |
+| 72 | Assessment (learner) | `GET` | [`/api/quizzes/for-level/{levelId}`](#level-quiz-lookup) | Any signed-in | ✨ Which quiz belongs to a level |
+| 73 | Assessment (learner) | `GET` | [`/api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions) | Any signed-in (own attempts) | ✨ The questions you got wrong, with their AI hints |
+| 74 | Assessment (learner) | `GET` | [`/api/level-skip/{levelId}`](#level-skip-status) | Child | ✨ May the child try to skip this level, and on what terms |
+| 75 | Assessment (learner) | `POST` | [`/api/level-skip/{levelId}/start`](#start-or-resume-level-skip-challenge) | Child | ✨ Start (or resume) the level-skip challenge |
+| 76 | Assessment (admin) | `PATCH` | [`/api/questions/{questionId}/correct-option`](#set-the-correct-option-atomic) | Admin | ✨ Move the correct answer to another option, in ONE request |
+| 77 | Assessment (admin) | `PUT` | [`/api/questions/order?quizId=`](#reorder-questions) | Admin | ✨ Set the order of a quiz's questions (idempotent) |
+| 78 | Assessment (admin) | `PUT` | [`/api/questions/{questionId}/options/order`](#reorder-question-options) | Admin | ✨ Set the order of a question's options (idempotent) |
+| 79 | Gamification | `GET` | [`/api/gamification/me`](#my-sparks-streak-and-inventory) | Any signed-in | ✨ Sparks, streak, freezes, inventory and running boosts |
+| 80 | Gamification | `GET` | [`/api/gamification/shop`](#the-shop) | Any signed-in | ✨ The shop, priced for this child |
+| 81 | Gamification | `POST` | [`/api/gamification/shop/{itemId}/purchase`](#buy-a-shop-item) | Any signed-in | ✨ Buy one item with Sparks |
+| 82 | Gamification | `POST` | [`/api/gamification/items/{itemId}/equip`](#equip-an-avatar-item) | Any signed-in | ✨ Wear an avatar item you own |
+
+✨ = new in this release.
 
 </div>
 
@@ -1893,6 +1957,117 @@ Content-Type: image/png
 
 ---
 
+### Lesson access: is this lesson unlocked?
+
+✨ **New in this release.**
+
+`GET /api/content/lessons/{lessonId}/access`
+
+**The rule.** A child cannot open a lesson until they have **passed the quiz of the lesson before it** in the same level. The first lesson of a level is always open, and a lesson whose predecessor has no active quiz counts as passed — locking a course because an admin has not written a quiz yet would be worse than not gating at all.
+
+"Passed" means any completed attempt of that quiz scoring at least `Assessment:LessonQuizPassPercentage` (default 60). Retries count: a child who got it right on the second try has learned it.
+
+- **Auth:** Bearer token (any role).
+- **Success:** `200 OK`, the envelope:
+
+```json
+{
+  "success": true,
+  "message": "تمت العملية بنجاح",
+  "data": {
+    "lessonId": 6,
+    "isUnlocked": false,
+    "isCompleted": false,
+    "requiredLessonId": 5,
+    "requiredLessonTitle": "ما هي الكهرباء",
+    "reason": "PreviousLessonQuizNotPassed",
+    "message": "لازم تنجح في اختبار درس \"ما هي الكهرباء\" الأول عشان تفتح الدرس ده."
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `isUnlocked` | The child may open the lesson. |
+| `isCompleted` | They have already marked it complete. |
+| `requiredLessonId` / `requiredLessonTitle` | The lesson whose quiz unlocks this one. Absent when `isUnlocked`. |
+| `reason` | A stable code to switch on: `Unlocked`, `PreviousLessonQuizNotPassed`, `LessonNotPublished`. |
+| `message` | A ready-to-show sentence in Arabic. Prefer it over composing your own. |
+
+- **Errors:** 401; 404 `"الدرس غير موجود"`; 500.
+- **Mock:** `mock_lesson_access_locked.json`.
+
+> This endpoint is a **query**. The enforcement is on `GET /api/content/lessons/{id}` itself, which returns **403** with the same `message` when a `Child` opens a locked lesson. Admins and parents are never gated — they review and supervise content they have no progress in.
+
+---
+
+### Level access: the whole lesson list at once
+
+✨ **New in this release.**
+
+`GET /api/content/levels/{levelId}/access`
+
+The same answer for every published lesson of a level, in lesson order, so the lesson-list screen can draw its padlocks in **one** call instead of one call per lesson. It costs two queries whatever the lesson count.
+
+- **Auth:** Bearer token (any role).
+- **Success:** `200 OK`, the envelope wrapping a list of the objects above:
+
+```json
+{
+  "success": true,
+  "message": "تمت العملية بنجاح",
+  "data": [
+    { "lessonId": 5, "isUnlocked": true, "isCompleted": true, "reason": "Unlocked", "message": "الدرس متاح، يلا نبدأ!" },
+    { "lessonId": 6, "isUnlocked": false, "isCompleted": false, "requiredLessonId": 5, "requiredLessonTitle": "ما هي الكهرباء", "reason": "PreviousLessonQuizNotPassed", "message": "لازم تنجح في اختبار درس \"ما هي الكهرباء\" الأول عشان تفتح الدرس ده." }
+  ]
+}
+```
+
+- **Errors:** 401; 500. An unknown or empty level returns `200` with `[]`.
+- **Mock:** `mock_level_access.json`.
+
+---
+
+### Reorder levels
+
+✨ **New in this release.** `PUT /api/content/levels/order` — Admin.
+
+### Reorder lessons
+
+✨ **New in this release.** `PUT /api/content/levels/{levelId}/lessons/order` — Admin.
+
+### Reorder lesson contents
+
+✨ **New in this release.** `PUT /api/content/lessons/{lessonId}/contents/order` — Admin.
+
+**All three work the same way, and all three replace a `swap-order` endpoint that is now deprecated.**
+
+**Why.** A swap is **not idempotent**: applying it twice puts the two items back where they started. A client that retried after a timeout — or an admin who tapped twice — silently reverted their own change, leaving the dashboard and the database disagreeing with nothing to indicate it. An absolute order describes a **state**, so sending it ten times leaves exactly the order sending it once does.
+
+- **Auth:** roles: `Admin`.
+- **Request body:**
+
+```json
+{ "orderedIds": [3, 1, 2] }
+```
+
+Send **every** id of the set being ordered, each exactly once, first to last. The server renumbers them `1..n` in a single transaction.
+
+- **Success:** `200 OK`, the envelope. Levels and lessons return the reordered list; contents return `{ "success": true, "message": "تم تعديل الترتيب بنجاح" }`.
+- **Errors:**
+
+| Status | When | Example message |
+|---|---|---|
+| 400 | An id is missing from the list | `"لازم تبعت الترتيب كامل؛ العناصر الناقصة: 7"` |
+| 400 | An id appears twice | `"العنصر رقم 3 مكرر في قائمة الترتيب"` |
+| 400 | An id belongs to another level/lesson | `"العنصر رقم 99 مش من ضمن العناصر اللي بتترتب"` |
+| 400 | The set is empty | `"المستوى ده مفيهوش دروس"` |
+| 401 / 403 | Not signed in / not `Admin` | — |
+
+  A partial list is **rejected, not half-applied**: a stale screen should reload, not overwrite. If you get one of these 400s, re-read the list and send the order again.
+
+---
+
 ## Assessment (learner)
 
 Placement, lesson quiz preview, attempts, hints and topic statistics: `PlacementController`, `LessonQuizController`, `QuizAttemptController` and `UserTopicStatController` (`ElectroWorld/Controllers/AssessmentModule`), backed by `AssessmentBL.Services`.
@@ -2078,10 +2253,15 @@ Already placed:
 
 ### Lesson quiz preview
 
-`GET /api/quizzes/for-lesson/{lessonId}`: called by the child app on the lesson screen, to preview the lesson's quiz before starting it.
+`GET /api/quizzes/for-lesson/{lessonId}`: called by the child app on the lesson screen, to draw the "start the quiz" card.
+
+⚠️ **Changed in this release: this no longer returns the questions.**
+
+The questions of a quiz are served in exactly one place — `POST /api/quiz-attempts` — because only that response is the **frozen** set the submission is graded against. Serving a second, unfrozen copy here invited the app to render one set and submit against another (an admin editing the quiz in between was enough), and it made a screen that needs a title and a count carry the whole quiz. Render the card from this response; render the quiz itself from the attempt.
 
 - **Auth:** Bearer token (any role). Class-level `[Authorize]` on `LessonQuizController` has no roles.
 - **Headers / language:** `Authorization`. Localized: `?language=` → `Accept-Language` → `ar`. The quiz title and description use the same fallback chain.
+- **Caching:** `PublicContent` — up to 60 s, varying by language ([Response caching](#response-caching)).
 - **Path / query parameters:**
 
 | Name | Type | Required | Rules |
@@ -2090,57 +2270,17 @@ Already placed:
 | `language` | string (query) | no | `en` or `ar`. Anything else → `ar`. |
 
 - **Request body:** none.
-- **Success:** `200 OK`. The body is a bare `LessonQuizResponseDto`.
+- **Success:** `200 OK`. The body is a bare `LessonQuizResponseDto`. (`description` is absent here because it is null — see [JSON](#json).)
+
 ```json
 {
   "quizId": 15,
   "lessonId": 5,
   "title": "اختبار الدائرة الكهربية",
-  "description": null,
   "totalQuestions": 3,
+  "totalPoints": 5,
   "language": "ar",
-  "languageFallbackApplied": false,
-  "questions": [
-    {
-      "questionId": 101,
-      "questionText": "ما هو الجهد الكهربي؟",
-      "questionType": "MultipleChoice",
-      "imageUrl": null,
-      "difficulty": "Easy",
-      "displayOrder": 1,
-      "points": 1,
-      "currentHint": null,
-      "options": [
-        { "optionId": 1001, "optionText": "فرق الجهد بين نقطتين", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1002, "optionText": "مقاومة مرور التيار", "imageUrl": null, "displayOrder": 2 }
-      ]
-    },
-    {
-      "questionId": 103,
-      "questionText": "المصباح يضيء بدون مصدر كهربي.",
-      "questionType": "TrueFalse",
-      "imageUrl": null,
-      "difficulty": "Easy",
-      "displayOrder": 2,
-      "points": 1,
-      "currentHint": null,
-      "options": [
-        { "optionId": 1010, "optionText": "صح", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1011, "optionText": "خطأ", "imageUrl": null, "displayOrder": 2 }
-      ]
-    },
-    {
-      "questionId": 104,
-      "questionText": "اشرح بأسلوبك لماذا يضيء المصباح عند غلق الدائرة الكهربية.",
-      "questionType": "Essay",
-      "imageUrl": null,
-      "difficulty": "Hard",
-      "displayOrder": 3,
-      "points": 3,
-      "currentHint": null,
-      "options": []
-    }
-  ]
+  "languageFallbackApplied": false
 }
 ```
 
@@ -2148,11 +2288,8 @@ Already placed:
 |---|---|
 | `quizId` | Pass to `POST /api/quiz-attempts?quizId={quizId}`. |
 | `totalQuestions` | Count of **active** questions, which is what a first attempt would contain. |
-| `languageFallbackApplied` | True if the quiz title/description or any question or option text is not in the requested language. |
-| `questions[].questionType` | `MultipleChoice`, `TrueFalse` or `Essay`. It decides the widget and which submit list the answer goes into. |
-| `questions[].points` | The question's **current** points. The attempt freezes the points at start, so they can differ if an admin changes them in between. |
-| `questions[].currentHint` | Always `null` here. |
-| `questions[].options` | Empty for `Essay`, exactly 2 for `TrueFalse`. Each option has `optionText`, `imageUrl` or both. Never `isCorrect`. |
+| `totalPoints` | Sum of those questions' points: what a perfect attempt is worth. ✨ New. |
+| `languageFallbackApplied` | True if the quiz title or description is not in the requested language. |
 
 - **Errors:**
 
@@ -2164,10 +2301,60 @@ Already placed:
 | 500 | Unexpected fault | `"حدث خطأ داخلي في الخادم"` |
 
 - **Frontend notes:**
-  - This is a **preview**. The questions to answer and submit are the ones returned by `POST /api/quiz-attempts`. Render from that response, not from this one.
+  - **Migration:** any code reading `questions` from this response must move to `POST /api/quiz-attempts`. There is no flag to get the old shape back.
+  - **Mock:** `mock_lesson_quiz.json` (updated to the new shape).
   - If a lesson has several active LessonQuizzes, the newest is used.
-  - Treat a 404 as "no quiz for this lesson" and hide the quiz entry point. Caching per `(lessonId, language)` for the lesson screen's lifetime is reasonable. The server does not cache.
+  - Treat a 404 as "no quiz for this lesson" and hide the quiz entry point.
   - Mocks: `mock_lesson_quiz.json` and `mock_lesson_quiz_not_found.json`.
+
+---
+
+### Level quiz lookup
+
+✨ **New in this release.**
+
+`GET /api/quizzes/for-level/{levelId}`: answers "the child is on level 3 — which quiz do I open?" in one call. The app previously had to page through the Admin quiz list (which a child cannot even call) and guess which quiz belonged to the level.
+
+Returns the level's active **LevelAssessment** quiz. Same shape and same rules as the per-lesson lookup — a summary, not the questions.
+
+- **Auth:** Bearer token (any role).
+- **Headers / language:** `Authorization`. Localized like the per-lesson lookup.
+- **Caching:** `PublicContent` — up to 60 s.
+- **Path / query parameters:**
+
+| Name | Type | Required | Rules |
+|---|---|---|---|
+| `levelId` | int (path) | yes | Route constraint `:int`. |
+| `language` | string (query) | no | `en` or `ar`. Anything else → `ar`. |
+
+- **Request body:** none.
+- **Success:** `200 OK`, a bare `LevelQuizResponseDto`:
+
+```json
+{
+  "levelId": 3,
+  "quizId": 21,
+  "title": "تقييم المستوى الثالث",
+  "totalQuestions": 8,
+  "totalPoints": 12,
+  "language": "ar",
+  "languageFallbackApplied": false
+}
+```
+
+- **Errors:**
+
+| Status | When | Example message |
+|---|---|---|
+| 401 | Missing or invalid token | `"غير مصرح لك بالوصول"` |
+| 404 | No such level | `"المستوى رقم 3 غير موجود"` |
+| 404 | The level has no active `LevelAssessment` quiz with active questions | `"لا يوجد اختبار متاح للمستوى رقم 3"` |
+| 500 | Unexpected fault | `"حدث خطأ داخلي في الخادم"` |
+
+- **Frontend notes:**
+  - Start it with `POST /api/quiz-attempts?quizId={quizId}`, exactly like a lesson quiz.
+  - A 404 means the level has no assessment yet: hide the entry point rather than showing an error.
+  - **Mock:** `mock_level_quiz.json`.
 
 ---
 
@@ -2284,8 +2471,12 @@ Retry of attempt 42, where question 102 was wrong (`?quizId=15&previousAttemptId
 
 | Field | Meaning |
 |---|---|
-| `attemptId` | New attempt id. Needed for get, submit, hint and result. |
-| `startedAt` | UTC, with `Z`. The attempt expires `Assessment:InProgressAttemptTimeoutMinutes` (default 180, minimum 30) after this. |
+| `attemptId` | The attempt id. Needed for get, submit, hint and result. |
+| `resumed` | ✨ **New.** `true` when this call re-served an attempt that was already open instead of creating one — a double tap, or a retry after a lost response. The attempt, its questions and its frozen points are exactly what the first call returned. |
+| `startedAt` | UTC, with `Z`. The attempt expires `Assessment:InProgressAttemptTimeoutMinutes` (default 180, minimum 30) after this. On a resumed attempt this is the ORIGINAL start time. |
+| `expiresAt`, `timeLimitSeconds` | ✨ **New.** Present only for a quiz played against a clock (today: the level-skip challenge). Absent for every other quiz. On a resumed attempt they describe the time LEFT, not a fresh window. |
+| `hearts` | ✨ **New.** Present only for a quiz played on hearts (today: the level-skip challenge): wrong answers allowed before the run is lost. |
+| `removedQuestionIds`, `notice` | ✨ **New.** On a retry: questions the child got wrong last time that an admin has deactivated since, and a ready-to-show sentence explaining their absence. `removedQuestionIds` is `[]` and `notice` is absent when there is nothing to say. |
 | `questions[]` | First attempt: every **active** question of the quiz, ordered by `displayOrder`. Retry: only questions that were **wrong** in `previousAttemptId` and are still active, ordered by `displayOrder` (the original numbers are kept, e.g. `2`). A retry never contains essays. |
 | `questions[].points` | Frozen into this attempt (`QuizAttemptQuestions.Points`). The submit is scored with these values, even if an admin changes the question later. |
 | `questions[].currentHint` | First attempt: `null`. Retry: the latest hint saved on that question in the previous attempt, in the requested language, or else the latest in any language. It can be a post-submit AI hint or a Hint-button hint. `null` if there is none. |
@@ -2306,24 +2497,29 @@ Retry of attempt 42, where question 102 was wrong (`?quizId=15&previousAttemptId
 | 404 | Retry: `previousAttemptId` does not exist **or belongs to someone else** | `"المحاولة رقم 42 غير موجودة"` (attempt 42 does not exist) |
 | 400 | Retry: previous attempt is of another quiz | `"المحاولة رقم 42 لا تخص الاختبار رقم 15"` (attempt 42 does not belong to quiz 15) |
 | 400 | Retry: previous attempt not Completed (still InProgress or Abandoned) | `"لا يمكن إعادة المحاولة رقم 42 لأنها لم تكتمل"` (cannot retry attempt 42 because it was not completed) |
-| 400 | Retry: previous attempt was already retried | `"تمت إعادة المحاولة رقم 42 من قبل"` (attempt 42 was already retried) |
+| 400 | Retry: previous attempt was already retried **and that retry is finished** (an open retry is resumed instead — see `resumed`) | `"تمت إعادة المحاولة رقم 42 من قبل"` (attempt 42 was already retried) |
 | 400 | Retry: previous attempt had no wrong answers | `"المحاولة رقم 42 لا تحتوي على إجابات خاطئة لإعادتها"` (no wrong answers to retry) |
 | 400 | Retry: every wrong question has since been deactivated | `"أسئلة المحاولة رقم 42 الخاطئة لم تعد متاحة لإعادتها"` (the wrong questions are no longer available) |
 | 400 | A MCQ/TF question has no correct option | `"لا يمكن بدء المحاولة: الأسئلة أرقام 102 ليس لها إجابة صحيحة"` |
-| 409 | Retry: a concurrent request retried the same attempt first (`UQ_QuizAttempts_PreviousAttemptId`) | `"تمت إعادة المحاولة رقم 42 بالفعل"` (attempt 42 has already been retried) |
+| 409 | A concurrent start won the race **and** its attempt could not then be read back (rare; the normal outcome is a 201 with `resumed: true`) | `"تعذّر بدء محاولة للاختبار رقم 15 بسبب طلب متزامن، برجاء إعادة المحاولة"` |
 | 500 | Unexpected fault | `"حدث خطأ داخلي في الخادم"` |
 
 - **Frontend notes:**
-  - **Not idempotent.** Every call without `previousAttemptId` creates a new attempt, and there is no "one open attempt per quiz" rule. Keep the `attemptId`, and resume it with `GET /api/quiz-attempts/{attemptId}` instead of starting again. Disable the Start button while the request is in flight.
+  - ✨ **Safe to press twice. Changed in this release.** A learner may have only **one live attempt per quiz**. A second start — a double-tapped button, an app retrying after a lost response — **resumes the first** and says so with `resumed: true`.
+
+    It used to create a SECOND attempt: the first was orphaned `InProgress` until the sweep abandoned it, and only one of the two could ever be submitted. The database enforces the rule now (`UQ_QuizAttempts_OneInProgressPerUserQuiz`), so even two simultaneous requests can only ever produce one attempt.
+
+    You may still disable the button while the request is in flight, but nothing breaks if you do not.
   - **Retry flow:**
-    1. Submit (or `GET …/result`) returns `retryQuestions` and `quizId`.
+    1. Submit returns the score. The retry questions are **not** in it any more — fetch them from [`GET /api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions) when the child taps "try again", or as soon as the `hintsReady` push arrives.
     2. `POST /api/quiz-attempts?quizId={quizId}&previousAttemptId={attemptId}` creates a new attempt holding only the still-active wrong questions, with their latest hints.
     3. Submit that attempt like any other, answering every question it contains.
     4. Each attempt can be retried **once**. A retry can itself be retried if it still has wrong answers, which makes a chain.
     5. A result with `wrongAnswers: 0` (or only essays) cannot be retried (400).
-  - `retryQuestions` in a result may list a question an admin has deactivated since. The retry attempt leaves it out, so the retry can have fewer questions than `retryQuestions`. Render the retry from **this** response.
+  - ✨ **Deactivated questions are now explained.** If an admin retired a question the child got wrong, the retry leaves it out — as before — but this response now lists it in `removedQuestionIds` and gives you `notice`, a sentence in the child's language saying the question was removed. Show it; the child was otherwise handed a shorter quiz than the result promised, with no explanation. Render the retry from **this** response either way.
   - **Keep the retry hints from this response.** `GET /api/quiz-attempts/{retryAttemptId}` reads hints saved on the retry attempt itself, so the hints carried over from the previous attempt do not come back there.
-  - A Placement quiz id also works here: it follows the placement rules (resume, 409 if placed). The app should still use `POST /api/placement/start`.
+  - A Placement or LevelSkip quiz id also works here and follows that type's own rules. The app should still use `POST /api/placement/start` and `POST /api/level-skip/{levelId}/start`.
+  - Mocks: `mock_start_attempt.json`, `mock_start_retry.json`, `mock_start_attempt_resumed.json`, `mock_start_retry_question_removed.json`.
   - The server does not refuse Parent or Admin tokens here.
   - Mocks: `mock_start_attempt.json`, `mock_start_retry.json`, `mock_start_attempt_mixed_ar.json`, `mock_start_attempt_mixed_en.json`, `mock_start_attempt_fallback.json`.
 
@@ -2408,10 +2604,16 @@ Retry of attempt 42, where question 102 was wrong (`?quizId=15&previousAttemptId
 
 ### Submit attempt
 
-`POST /api/quiz-attempts/{attemptId}/submit`: called by the child app when the child finishes a quiz, a retry, or the placement test.
+`POST /api/quiz-attempts/{attemptId}/submit`: called by the child app when the child finishes a quiz, a retry, the placement test or a level-skip challenge.
+
+⚠️ **Changed in this release, in three ways:**
+
+1. **The request field `mistakes` is now `answers`.** It always meant "the answer to every MCQ/TrueFalse question", not "the ones you got wrong"; the old name described the backend's storage and misled every reader.
+2. **The response no longer contains `retryQuestions`.** They depend on AI hints written *after* the score is committed, so they now have their own endpoint: [`GET /api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions).
+3. **This request no longer waits for the AI.** It grades, commits and returns; hints and essay grading run on a background worker and announce themselves over [the learner hub](#real-time-updates-signalr). It used to block for up to 15 seconds on an AI call for a score that had already been committed before the AI was even asked.
 
 - **Auth:** Bearer token (any role). Only the caller's own attempts.
-- **Headers / language:** `Authorization`, `Content-Type: application/json` (the action has `[Consumes("application/json")]`; any other type gets 415). Localized: `?language=` → `Accept-Language` → `ar`. The resolved language sets the text of `retryQuestions`, the language of the post-submit AI hints, and the language the AI writes **essay feedback** in. That language is stored with each essay, so the feedback keeps it even if the result is later fetched in another language.
+- **Headers / language:** `Authorization`, `Content-Type: application/json` (the action has `[Consumes("application/json")]`; any other type gets 415). Localized: `?language=` → `Accept-Language` → `ar`. The resolved language is the one the AI writes **hints** and **essay feedback** in. It is stored with each essay, so the feedback keeps it even if the result is later fetched in another language.
 - **Path / query parameters:**
 
 | Name | Type | Required | Rules |
@@ -2423,16 +2625,16 @@ Retry of attempt 42, where question 102 was wrong (`?quizId=15&previousAttemptId
 
 | Field | Type | Required | Rules |
 |---|---|---|---|
-| `mistakes` | array | yes when the attempt has MCQ/TF questions | Despite the name, this holds the answer to **every** `MultipleChoice` and `TrueFalse` question, right or wrong. The server decides correctness against the answer key frozen at attempt start. Omitting the property is treated as an empty list. Sending `null` fails model validation (400). |
-| `mistakes[].questionId` | int | yes | A MCQ/TF question of this attempt. No duplicates. An Essay id here is rejected. |
-| `mistakes[].selectedOptionId` | int | yes | An existing option **of that question**. |
-| `essayAnswers` | array | yes when the attempt has essays | One entry per `Essay` question. Omitting it is treated as an empty list. Sending `null` fails model validation (400). |
+| `answers` | array | yes when the attempt has MCQ/TF questions | ⚠️ **Renamed from `mistakes`.** The answer to **every** `MultipleChoice` and `TrueFalse` question, right or wrong. The server decides correctness against the answer key frozen at attempt start. Omitting the property is treated as an empty list. Sending `null` fails validation (400). |
+| `answers[].questionId` | int | yes | A MCQ/TF question of this attempt. No duplicates. An Essay id here is rejected. |
+| `answers[].selectedOptionId` | int | yes | An existing option **of that question**. |
+| `essayAnswers` | array | yes when the attempt has essays | One entry per `Essay` question. Omitting it is treated as an empty list. Sending `null` fails validation (400). |
 | `essayAnswers[].questionId` | int | yes | An Essay question of this attempt. No duplicates. |
 | `essayAnswers[].answerText` | string | yes | Not blank. At most `Assessment:EssayAnswerMaxLength` characters after trimming (default 4000, clamped 100–20000). Stored trimmed. |
 
 ```json
 {
-  "mistakes": [
+  "answers": [
     { "questionId": 101, "selectedOptionId": 1001 },
     { "questionId": 102, "selectedOptionId": 1005 },
     { "questionId": 103, "selectedOptionId": 1011 }
@@ -2443,9 +2645,12 @@ Retry of attempt 42, where question 102 was wrong (`?quizId=15&previousAttemptId
 }
 ```
 
+> **Migration:** sending `mistakes` no longer binds anything. Because a missing list is treated as empty, an un-migrated client does not get a helpful parse error — it gets `400` with `"يجب الإجابة على كل أسئلة الاختبار؛ الأسئلة بدون إجابة: …"` listing every MCQ/TF question. If you see that 400 on a request you believe is complete, you are still sending `mistakes`.
+
 - **Success:** `200 OK`. The body is a bare `QuizAttemptResultDto`.
 
-Example: 101 (MCQ, 1 pt) right, 102 (MCQ, 2 pts) wrong, 103 (TF, 1 pt) right, 104 (Essay, 3 pts) not yet graded by the AI:
+Example: 101 (MCQ, 1 pt) right, 102 (MCQ, 2 pts) wrong, 103 (TF, 1 pt) right, 104 (Essay, 3 pts) not yet graded. Note the absent keys — a null field is omitted ([JSON](#json)):
+
 ```json
 {
   "attemptId": 42,
@@ -2455,7 +2660,7 @@ Example: 101 (MCQ, 1 pt) right, 102 (MCQ, 2 pts) wrong, 103 (TF, 1 pt) right, 10
   "autoGradedQuestions": 3,
   "pendingEssayQuestions": 1,
   "essayResults": [
-    { "questionId": 104, "status": "Pending", "awardedPoints": null, "maxPoints": 3, "feedback": null }
+    { "questionId": 104, "status": "Pending", "maxPoints": 3 }
   ],
   "correctAnswers": 2,
   "wrongAnswers": 1,
@@ -2465,28 +2670,24 @@ Example: 101 (MCQ, 1 pt) right, 102 (MCQ, 2 pts) wrong, 103 (TF, 1 pt) right, 10
   "pendingPoints": 3,
   "language": "ar",
   "languageFallbackApplied": false,
-  "hintsStatus": "Generated",
-  "retryQuestions": [
-    {
-      "questionId": 102,
-      "questionText": "ما وحدة قياس المقاومة الكهربية؟",
-      "questionType": "MultipleChoice",
-      "imageUrl": "/uploads/lessons/8f1c2b3a-6b4d-4e2a-9c1f-3d7e5a2b1c0d.png",
-      "difficulty": "Medium",
-      "displayOrder": 2,
-      "points": 2,
-      "currentHint": "افتكر إن الوحدة اسمها على اسم العالم الألماني.",
-      "options": [
-        { "optionId": 1004, "optionText": "الأوم", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1005, "optionText": "الفولت", "imageUrl": null, "displayOrder": 2 },
-        { "optionId": 1006, "optionText": null, "imageUrl": "/uploads/lessons/9b1d3f5a-7c9e-4b2d-8f6a-1c3e5a7b9d0f.png", "displayOrder": 3 }
-      ]
-    }
-  ],
-  "placement": null
+  "hintsStatus": "Pending",
+  "rewards": {
+    "sparksEarned": 5,
+    "sparksBalance": 145,
+    "currentStreakDays": 4,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      { "reason": "QuizCompleted", "sparks": 5, "message": "‏+5 شرارة لإنهاء الاختبار" }
+    ]
+  }
 }
 ```
-Placement attempt (12 one-point questions, 7 right). `placement` is filled in, there are no retry questions and no hints:
+
+Placement attempt (12 one-point questions, 7 right). `placement` is filled in, and there are no hints:
+
 ```json
 {
   "attemptId": 58,
@@ -2505,7 +2706,6 @@ Placement attempt (12 one-point questions, 7 right). `placement` is filled in, t
   "language": "ar",
   "languageFallbackApplied": false,
   "hintsStatus": "NotRequired",
-  "retryQuestions": [],
   "placement": {
     "levelId": 2,
     "levelTitle": "المستوى الثاني: الدوائر الكهربية",
@@ -2513,14 +2713,30 @@ Placement attempt (12 one-point questions, 7 right). `placement` is filled in, t
     "scorePercentage": 58.33,
     "passPercentage": 75,
     "placedAt": "2026-09-11T16:05:42.3171234Z",
+    "lessonsCompleted": 4,
     "levels": [
-      { "levelId": 1, "levelTitle": "المستوى الأول: أساسيات الكهرباء", "questionsAsked": 4, "correctAnswers": 4, "totalPoints": 4, "earnedPoints": 4, "scorePercentage": 100, "mastered": true },
-      { "levelId": 2, "levelTitle": "المستوى الثاني: الدوائر الكهربية", "questionsAsked": 4, "correctAnswers": 2, "totalPoints": 4, "earnedPoints": 2, "scorePercentage": 50, "mastered": false },
-      { "levelId": 3, "levelTitle": "المستوى الثالث: القياسات", "questionsAsked": 4, "correctAnswers": 1, "totalPoints": 4, "earnedPoints": 1, "scorePercentage": 25, "mastered": false }
+      { "levelId": 1, "levelTitle": "المستوى الأول: أساسيات الكهرباء", "questionsAsked": 4, "correctAnswers": 4, "totalPoints": 4, "earnedPoints": 4, "scorePercentage": 100, "mastered": true, "assessed": true },
+      { "levelId": 2, "levelTitle": "المستوى الثاني: الدوائر الكهربية", "questionsAsked": 4, "correctAnswers": 2, "totalPoints": 4, "earnedPoints": 2, "scorePercentage": 50, "mastered": false, "assessed": true },
+      { "levelId": 3, "levelTitle": "المستوى الثالث: القياسات", "questionsAsked": 4, "correctAnswers": 0, "totalPoints": 4, "earnedPoints": 0, "scorePercentage": 0, "mastered": false, "assessed": true },
+      { "levelId": 4, "levelTitle": "المستوى الرابع: الإلكترونيات", "questionsAsked": 0, "correctAnswers": 0, "totalPoints": 0, "earnedPoints": 0, "scorePercentage": 0, "mastered": false, "assessed": false }
+    ]
+  },
+  "rewards": {
+    "sparksEarned": 20,
+    "sparksBalance": 20,
+    "currentStreakDays": 1,
+    "longestStreakDays": 1,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 0,
+    "lines": [
+      { "reason": "PlacementCompleted", "sparks": 20, "message": "‏+20 شرارة لاجتياز اختبار تحديد المستوى" }
     ]
   }
 }
 ```
+
+⚠️ **`placement.levels` now lists EVERY level.** It used to omit any level with `questionsAsked == 0`, which handed the app a ladder with missing rungs and no way to tell which were missing or why. Level 3 above was answered entirely wrong (`assessed: true`, `scorePercentage: 0`); level 4 had no placement questions at all (`assessed: false`). Read `assessed` to tell the two apart — a level that could not be assessed is also why the child was not placed above it.
 
 **Scoring and points** (`AttemptScoring.ScorePercentage` / `AttemptScoring.CountPoints`). Every question weighs the `points` frozen when the attempt started (1 unless the admin set another value).
 
@@ -2540,70 +2756,69 @@ In the example: score = 2 (101 + 103) ÷ 4 (101 + 102 + 103) = 50. `totalPoints`
 
 | Other field | Meaning |
 |---|---|
-| `completedAt` | When the result was saved (UTC). Has a `Z` here; no offset from `GET …/result` or a replayed submit. |
+| `completedAt` | When the result was saved (UTC). |
 | `essayResults[]` | Every essay answer of the attempt, ordered by question `displayOrder`. |
-| `essayResults[].status` | `Pending`: the AI has not finished; ask again later. `Graded`: final, with `awardedPoints` (0…`maxPoints`) and `feedback` (AI text for the child, in the submit language). `NotGraded`: final, the AI declined or never produced a usable grade; `awardedPoints` and `feedback` are `null` and nobody else will grade it. |
+| `essayResults[].status` | `Pending`: the AI has not finished; it will. `Graded`: final, with `awardedPoints` (0…`maxPoints`) and `feedback`. `NotGraded`: final, earns 0, no feedback. ✨ **An essay now always reaches a final state** — see the grading timeline below. |
 | `essayResults[].maxPoints` | The essay question's frozen points. |
-| `hintsStatus` | Whether `retryQuestions` carry hints. `NotRequired`: no wrong answers (always the case for placement). `Generated`: every retry question has `currentHint`. `Partial`: some do. `Unavailable`: none do (AI not configured, down, timed out, or every hint was rejected because it gave the answer away). The score is final whatever this says. |
-| `retryQuestions[]` | The wrong MCQ/TF questions, ordered by `displayOrder`, localized, with `currentHint` or `null`. Their `points` come from the live question (see Frontend notes). |
-| `languageFallbackApplied` | Refers to the `retryQuestions` text only. `false` when there are none. |
-| `placement` | `null` for every quiz except Placement. For placement it is a `PlacementResultDto` (fields explained under Placement status), and the placement is saved in the same transaction as the score. |
+| `hintsStatus` | ⚠️ **A fresh submission now returns `Pending`.** `NotRequired`: no wrong answers (always so for placement and level-skip). `Pending`: there are wrong answers and the AI is still writing their hints. `Generated` / `Partial` / `Unavailable`: final — every, some, or no retry question carries a hint. The score is final whatever this says. |
+| `languageFallbackApplied` | `false` on a submission (there is no localized list in the body any more). |
+| `placement` | Present only for a Placement attempt (absent otherwise). See above. |
+| `levelSkip` | ✨ **New.** Present only for a [level-skip challenge](#level-skip-status): `passed`, `heartsAllowed`, `heartsRemaining`, `wrongAnswers`, `scorePercentage`, `passPercentage`, `lessonsCompleted`. |
+| `rewards` | ✨ **New.** The Sparks this attempt earned and the streak after it — everything the reward bar needs without a second call. See [Gamification](#gamification). All zeros when the Gamification module is not configured. |
 
 - **Errors** (roughly in check order, `QuizAttemptService.SubmitAsync` / `GradeAndCommitAsync`):
 
 | Status | When | Example message |
 |---|---|---|
-| 400 (ProblemDetails) | Missing or malformed JSON body, wrong field types, `"mistakes": null`, `"essayAnswers": null`, or a missing/empty `answerText` caught by ASP.NET Core model validation (non-nullable properties are implicitly required) | framework `errors` object |
+| 400 (framework) | Missing or malformed JSON body, wrong field types, `"answers": null`, `"essayAnswers": null`, or a missing/empty `answerText` | `{"success":false,"message":"بيانات الطلب غير صحيحة في الحقول: essayAnswers","data":null}` |
 | 415 (framework) | `Content-Type` not `application/json` | framework response, not the envelope; the body may be empty |
 | 401 | Missing or invalid token | `"غير مصرح لك بالوصول"` |
 | 404 | Attempt does not exist **or belongs to another user** | `"المحاولة رقم 42 غير موجودة"` |
 | 200 (replay) | Attempt is already `Completed`: the saved result is returned, and the body is **not** re-validated or re-graded | — |
-| 410 | Attempt is Abandoned, or still InProgress but older than the timeout (it is marked Abandoned now) | `"المحاولة رقم 42 انتهت صلاحيتها قبل تسليمها، برجاء بدء محاولة جديدة"` (attempt 42 expired before it was submitted; please start a new attempt) |
+| 410 | Attempt is Abandoned, or still InProgress but older than the timeout (it is marked Abandoned now) | `"المحاولة رقم 42 انتهت صلاحيتها قبل تسليمها، برجاء بدء محاولة جديدة"` |
+| 410 | ✨ A **timed** quiz whose clock ran out (level-skip) | `"انتهى وقت المحاولة رقم 71 (180 ثانية)، برجاء بدء محاولة جديدة"` |
 | 409 | Placement attempt, and the learner is already placed | `"تم تحديد مستواك بالفعل، لا يمكن إعادة اختبار تحديد المستوى"` |
-| 400 | A `mistakes` item is `null` | `"قائمة الإجابات تحتوي على عنصر فارغ"` (the answers list contains an empty item) |
-| 400 | Same `questionId` twice in `mistakes` | `"السؤال رقم 102 مكرر في قائمة الإجابات"` (question 102 is duplicated in the answers) |
-| 400 | `mistakes` item for a question not in the attempt, or for an Essay | `"السؤال رقم 104 لا يخص هذه المحاولة أو لا يُصحّح تلقائيًا"` (question 104 is not in this attempt or is not auto-graded) |
+| 400 | An `answers` item is `null` | `"قائمة الإجابات تحتوي على عنصر فارغ"` |
+| 400 | Same `questionId` twice in `answers` | `"السؤال رقم 102 مكرر في قائمة الإجابات"` |
+| 400 | `answers` item for a question not in the attempt, or for an Essay | `"السؤال رقم 104 لا يخص هذه المحاولة أو لا يُصحّح تلقائيًا"` |
 | 400 | An `essayAnswers` item is `null` | `"قائمة الإجابات المقالية تحتوي على عنصر فارغ"` |
 | 400 | Same `questionId` twice in `essayAnswers` | `"السؤال رقم 104 مكرر في قائمة الإجابات المقالية"` |
-| 400 | `essayAnswers` item for a non-essay question, or one not in the attempt | `"السؤال رقم 101 ليس سؤالًا مقاليًا في هذه المحاولة"` (question 101 is not an essay question in this attempt) |
-| 400 | Blank `answerText` (service check; model validation usually rejects it first) | `"إجابة السؤال رقم 104 فارغة"` (the answer to question 104 is empty) |
-| 400 | `answerText` too long | `"إجابة السؤال رقم 104 تتجاوز 4000 حرفًا"` (answer exceeds 4000 characters) |
-| 400 | At least one question unanswered (ids listed ascending) | `"يجب الإجابة على كل أسئلة الاختبار؛ الأسئلة بدون إجابة: 101, 104"` (every question must be answered; unanswered: 101, 104) |
-| 400 | `selectedOptionId` does not exist | `"الاختيار رقم 1099 غير موجود"` (option 1099 does not exist) |
-| 400 | `selectedOptionId` belongs to another question | `"الاختيار رقم 1004 لا يخص السؤال رقم 101"` (option 1004 does not belong to question 101) |
-| 400 | Placement attempt, but the Content module has no levels | `"لا توجد مستويات متاحة لتحديد مستوى الطالب"` (no levels available to place the learner) |
-| 409 | A concurrent request interfered (another submit, the expiry sweep, a statistics row update or a deadlock). Nothing was saved and the attempt is still InProgress. | `"تعذّر تسليم المحاولة رقم 42 بسبب طلب متزامن، برجاء إعادة المحاولة"` (could not submit attempt 42 because of a concurrent request; please retry) |
-| 409 | Two placement attempts of the same learner submitted at once; the other one won | `"تم تحديد مستواك بالفعل، لا يمكن إعادة اختبار تحديد المستوى"` |
+| 400 | `essayAnswers` item for a non-essay question, or one not in the attempt | `"السؤال رقم 101 ليس سؤالًا مقاليًا في هذه المحاولة"` |
+| 400 | Blank `answerText` | `"إجابة السؤال رقم 104 فارغة"` |
+| 400 | `answerText` too long | `"إجابة السؤال رقم 104 تتجاوز 4000 حرفًا"` |
+| 400 | At least one question unanswered (ids listed ascending) — **also what an un-migrated `mistakes` client gets** | `"يجب الإجابة على كل أسئلة الاختبار؛ الأسئلة بدون إجابة: 101, 104"` |
+| 400 | `selectedOptionId` does not exist | `"الاختيار رقم 1099 غير موجود"` |
+| 400 | `selectedOptionId` belongs to another question | `"الاختيار رقم 1004 لا يخص السؤال رقم 101"` |
+| 400 | Placement attempt, but the Content module has no levels | `"لا توجد مستويات متاحة لتحديد مستوى الطالب"` |
+| 409 | A concurrent request interfered (another submit, the expiry sweep, a statistics row update or a deadlock). Nothing was saved and the attempt is still InProgress. | `"تعذّر تسليم المحاولة رقم 42 بسبب طلب متزامن، برجاء إعادة المحاولة"` |
 | 500 | Unexpected fault | `"حدث خطأ داخلي في الخادم"` |
 
-If a concurrent submit of the **same** attempt wins the race, this request returns that saved result with 200 instead of an error. The same happens if the attempt turns out Completed after a conflict. If the sweep abandoned it, the answer is 410.
+If a concurrent submit of the **same** attempt wins the race, this request returns that saved result with 200 instead of an error. If the sweep abandoned it, the answer is 410.
 
 - **Frontend notes:**
-  - **How the request runs.**
-    1. **Phase A** validates, grades and commits the score, wrong answers, essay answers (Pending), topic statistics, and the placement if any.
-    2. **Phase B** runs only after that commit, inside one AI budget of `Assessment:AiHintTimeoutSeconds` (default 15 s, clamped 1–60). It first generates hints for the wrong answers, then asks the AI to grade the essays with whatever time is left.
-    3. AI failures never fail the request. The one budget covers hints **and** inline essay grading together: when it runs out, the essay request is abandoned uncounted and left to the background worker. Expect up to about 15 s of AI waiting plus database work. Set the client timeout well above that, e.g. 30–45 s (suggestion).
-  - **Safe to repeat.** Resubmitting a Completed attempt returns the saved result with 200 and no second grading. **Recovery after a lost response or a client timeout:** call `GET /api/quiz-attempts/{attemptId}/result`.
+  - ✨ **How the request runs now.**
+    1. **Phase A, inline — all the child waits for.** Validate, grade, commit (answers, score, statistics, placement) and grant the Sparks. Then return.
+    2. **Phase B, on a background worker.** AI hints for the wrong answers, then AI grading of the essays. Each announces itself on [the learner hub](#real-time-updates-signalr) (`hintsReady`, `essaysGraded`).
+    3. Nothing in Phase B can fail this request or change `scorePercentage`.
+
+    **A normal client timeout is now appropriate** — this is a database write, not an AI call. The old advice to allow 30–45 s no longer applies.
+  - **Safe to repeat.** Resubmitting a Completed attempt returns the saved result with 200: no second grading, no second reward, no second AI job. **Recovery after a lost response:** call `GET /api/quiz-attempts/{attemptId}/result`.
     - 200: the submit went through; show it.
     - 409 "not submitted yet": nothing was saved; submit again.
     - 410: expired; start a new attempt.
-  - On **409 "concurrent request"**, just resubmit the same body. On **410**, start a new attempt (the answers are lost). On a **400 listing unanswered ids**, send the child back to those questions.
-  - **Build the body from the attempt's questions.** Every `MultipleChoice`/`TrueFalse` question goes into `mistakes`, every `Essay` into `essayAnswers`. Do not filter to wrong answers: the client does not know the key, and a missing answer is a 400. Only the wrong answers are stored (`QuizAttemptMistakes`); correct answers leave no row.
-  - **Essays: poll `GET …/result` while `pendingEssayQuestions > 0`.**
-    - Fields that change while polling: `essayResults[].status`, `awardedPoints`, `feedback`, `pendingEssayQuestions`, `earnedPoints`, `pendingPoints`.
+  - On **409 "concurrent request"**, just resubmit the same body. On **410**, start a new attempt (the answers are lost). On a **400 listing unanswered ids**, send the child back to those questions — or check that you migrated `mistakes` → `answers`.
+  - **Build the body from the attempt's questions.** Every `MultipleChoice`/`TrueFalse` question goes into `answers`, every `Essay` into `essayAnswers`. Do not filter to wrong answers: the client does not know the key, and a missing answer is a 400.
+  - **Retry questions:** fetch them from [`GET /api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions) when the child taps "try again", or when the `hintsReady` push arrives. They are not in this response.
+  - ✨ **Essays now always finish.** Prefer the `essaysGraded` push over polling; if you poll, poll `GET …/result` while `pendingEssayQuestions > 0`.
+    - Fields that change: `essayResults[].status`, `awardedPoints`, `feedback`, `pendingEssayQuestions`, `earnedPoints`, `pendingPoints`.
     - Fields that never change: `scorePercentage`, `correctAnswers`, `wrongAnswers`, `totalPoints`.
-    - Grading timeline, from `EssayEvaluationService` and `EssayEvaluationWorker` with default settings:
-      1. **Inline attempt** inside this submit's AI budget. If it succeeds, the response already shows `Graded`/`NotGraded`.
-      2. **Nothing changes for at least `EssayInlineGraceMinutes` (5 min)** after the submit. The background worker leaves younger essays alone.
-      3. **Background worker:** runs every `EssayEvaluationIntervalMinutes` (2 min), one AI request per attempt with a `EssayEvaluationTimeoutSeconds` (30 s) timeout.
-      4. **Retries after a failed AI attempt:** the wait grows by `EssayEvaluationRetryMinutes` (10 min) × attempts made (10, 20, 30, 40 min).
-      5. **Final state:** an AI `Skipped` becomes `NotGraded` immediately. After `EssayEvaluationMaxAttempts` (5) failures the essay becomes `NotGraded`. The worst case is therefore well over an hour and a half. An essay whose question has neither text nor an image description is closed as `NotGraded` on its first evaluation, without asking the AI.
-    - If the essay AI endpoint is **not configured**, essays stay `Pending` indefinitely: no attempt is counted and no final state is reached.
-    - Suggested UI: show the MCQ score at once and an "essay being graded" state. Refresh when the result screen is opened, on pull-to-refresh, or about every 1–2 min while the screen is visible. Stop when `pendingEssayQuestions == 0`. Polling faster than the worker interval gains nothing.
-  - **Hints.** `retryQuestions[].currentHint` in this response contains only hints generated by this submit. `GET …/result` also shows hints the child took with the Hint button during the attempt. For the same attempt, `hintsStatus` and `currentHint` can therefore be richer in the GET than in the submit response.
-  - `retryQuestions[].points` is the question's **live** points. The retry attempt freezes whatever value is live when it starts.
-  - `placement` is always present in the JSON (`null` for non-placement quizzes).
-  - Mocks: `mock_submit_mixed_request.json`, `mock_submit_attempt_request.json` (valid only for an attempt without essays), `mock_submit_attempt_result.json`, `mock_submit_perfect_score.json`, `mock_submit_mixed_result_ar.json`, `mock_submit_mixed_result_en.json`, `mock_submit_essay_only_result.json`, `mock_submit_essay_graded_result.json`, `mock_submit_placement_result.json`, `mock_submit_missing_answers.json`, `mock_attempt_ai_failure.json`, `mock_attempt_already_completed.json`, `mock_attempt_abandoned.json`, `mock_essay_empty_answer.json`, `mock_essay_not_essay_question.json`, `mock_mistake_on_essay_question.json`.
+    - Timeline with default settings:
+      1. **Background attempt**, usually within seconds of the submit.
+      2. **Retries** every `EssayEvaluationIntervalMinutes` (2 min), with the wait after a failure growing by `EssayEvaluationRetryMinutes` (10 min) × attempts made.
+      3. ✨ **A hard deadline.** After `EssayGradingDeadlineMinutes` (default 60) the answer is settled whatever the AI is doing: graded from the question's admin-authored keywords if it has any (`status: "Graded"`, and the feedback says which ideas were found), or `NotGraded` if it has none. **An essay can no longer sit `Pending` forever**, which is what happened whenever the essay AI was unconfigured or unreachable.
+    - Suggested UI: show the MCQ score at once and an "essay being graded" state; refresh on the push, on screen open, or on pull-to-refresh. Polling faster than the worker interval gains nothing.
+  - `rewards.lines` is ready to display as a "+N Sparks, because…" list.
+  - Mocks: `mock_submit_mixed_request.json`, `mock_submit_attempt_request.json`, `mock_submit_attempt_result.json`, `mock_submit_perfect_score.json`, `mock_submit_mixed_result_ar.json`, `mock_submit_mixed_result_en.json`, `mock_submit_essay_only_result.json`, `mock_submit_essay_graded_result.json`, `mock_submit_placement_result.json`, `mock_submit_missing_answers.json`, `mock_attempt_ai_failure.json`, `mock_attempt_already_completed.json`, `mock_attempt_abandoned.json`, `mock_essay_empty_answer.json`, `mock_essay_not_essay_question.json`, `mock_mistake_on_essay_question.json`. The request mocks have been updated to `answers`, and the result mocks no longer carry `retryQuestions` or `null` fields.
 
 ---
 
@@ -2611,8 +2826,10 @@ If a concurrent submit of the **same** attempt wins the race, this request retur
 
 `GET /api/quiz-attempts/{attemptId}/result`: called by the child app to recover a lost submit response, refresh essay grades, or reopen a past result.
 
+⚠️ **Changed in this release:** like the submit response, this no longer carries `retryQuestions`. They live at [`GET /api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions).
+
 - **Auth:** Bearer token (any role). The owner comes from the token's `sub` claim, never from the request.
-- **Headers / language:** `Authorization`. Localized: `?language=` → `Accept-Language` → `ar`. The language applies to `retryQuestions` text and to which hint is shown (requested language first, otherwise the latest in any language). Essay `feedback` stays in the language used at submit.
+- **Headers / language:** `Authorization`. Localized: `?language=` → `Accept-Language` → `ar`. Essay `feedback` stays in the language used at submit.
 - **Path / query parameters:**
 
 | Name | Type | Required | Rules |
@@ -2621,7 +2838,8 @@ If a concurrent submit of the **same** attempt wins the race, this request retur
 | `language` | string (query) | no | `en` or `ar`. |
 
 - **Request body:** none.
-- **Success:** `200 OK`. The body is a bare `QuizAttemptResultDto`, the same fields as Submit. Here is the earlier attempt after the AI graded the essay:
+- **Success:** `200 OK`, a bare `QuizAttemptResultDto` — the same fields as Submit. Here is the earlier attempt after the AI graded the essay:
+
 ```json
 {
   "attemptId": 42,
@@ -2647,8 +2865,71 @@ If a concurrent submit of the **same** attempt wins the race, this request retur
   "pendingPoints": 0,
   "language": "ar",
   "languageFallbackApplied": false,
+  "hintsStatus": "Generated"
+}
+```
+
+An essay the AI could not grade reads `{ "questionId": 104, "status": "NotGraded", "maxPoints": 3 }`, with `earnedPoints: 2` and `pendingPoints: 0`. ✨ One graded by the question's keywords after the deadline reads as an ordinary `"Graded"` — with `feedback` naming how many key ideas were found — because to the child it is simply their grade.
+
+| Field | Differences from the Submit response |
+|---|---|
+| `scorePercentage` / `correctAnswers` / `completedAt` | The values saved at submit, never recomputed. `scorePercentage` comes from `DECIMAL(5,2)`, e.g. `50.00`. |
+| `wrongAnswers` | Count of stored wrong answers. |
+| `essayResults` / `pendingEssayQuestions` / `earnedPoints` / `pendingPoints` | Re-read on every call, so they include grades that arrived after the submit. |
+| `hintsStatus` | Derived from **every hint saved on this attempt**: background AI hints **and** Hint-button hints taken during the attempt. It settles from `Pending` to `Generated`/`Partial`/`Unavailable` once the hint job has had its chance. Placement and level-skip: always `NotRequired`. |
+| `rewards` | **All zeros here.** Rewards are granted once, by the submit, and this endpoint grants nothing. Read the live wallet from [`GET /api/gamification/me`](#my-sparks-streak-and-inventory). |
+| `placement` | For placement attempts: rebuilt from the stored placement (stored `passPercentage`, frozen points, current level list, and the same `lessonsCompleted` the submit reported). Absent otherwise. |
+| `levelSkip` | For level-skip attempts: recomputed from the saved snapshot, so it always matches what the submit said. Absent otherwise. |
+| `languageFallbackApplied` | Always `false`: there is no localized list in this body any more. |
+
+- **Errors** (`QuizAttemptService.GetResultAsync`):
+
+| Status | When | Example message |
+|---|---|---|
+| 401 | Missing or invalid token | `"غير مصرح لك بالوصول"` |
+| 404 | Attempt does not exist **or belongs to another user** | `"المحاولة رقم 42 غير موجودة"` |
+| 409 | Attempt is still InProgress (not expired): not submitted yet | `"المحاولة رقم 42 لم يتم تسليمها بعد، برجاء إرسال الإجابات"` |
+| 410 | Attempt is Abandoned, or InProgress past the timeout | `"المحاولة رقم 42 انتهت صلاحيتها قبل تسليمها، برجاء بدء محاولة جديدة"` |
+| 500 | Unexpected fault | `"حدث خطأ داخلي في الخادم"` |
+
+- **Frontend notes:**
+  - Read-only and idempotent. Safe to call as often as needed. It is still the **essay polling endpoint** — but prefer the `essaysGraded` push on [the learner hub](#real-time-updates-signalr) and use polling as the fallback.
+  - **Recovery algorithm after a submit with no response:** 200 → show it. 409 → resubmit the same body. 410 → start a new attempt.
+  - **Start a retry from here:** fetch [`GET …/retry-questions`](#get-retry-questions), then `POST /api/quiz-attempts?quizId={quizId}&previousAttemptId={attemptId}`. Only possible when `wrongAnswers > 0` and this attempt has not already been retried to completion.
+  - Do not cache this response while essays are Pending. Once `pendingEssayQuestions == 0` and `hintsStatus` is no longer `Pending`, it no longer changes. The server does not cache it either.
+  - Mocks: `mock_attempt_result.json`, `mock_attempt_result_essay_not_graded.json`, `mock_attempt_result_not_submitted.json`, `mock_attempt_abandoned.json`, `mock_attempt_not_found.json`.
+  - To reopen the caller's last result without an id, use [`GET /api/quiz-attempts/latest`](#get-latest-result).
+
+---
+
+### Get retry questions
+
+✨ **New in this release.**
+
+`GET /api/quiz-attempts/{attemptId}/retry-questions`: the questions the child got wrong in a submitted attempt, each with its latest AI hint.
+
+**Why it is its own endpoint.** The hints are written by the AI *after* the result is committed. Keeping them inside the result meant the submit had to wait for the AI before it could answer at all — for a score that was already saved. Splitting them lets the submission return immediately and lets this endpoint tell you honestly whether the hints exist yet.
+
+- **Auth:** Bearer token (any role). Only the caller's own attempts.
+- **Headers / language:** `Authorization`. Localized: `?language=` → `Accept-Language` → `ar`. The language picks the question text and which hint is shown (requested language first, otherwise the latest in any language).
+- **Path / query parameters:**
+
+| Name | Type | Required | Rules |
+|---|---|---|---|
+| `attemptId` | long (path) | yes | One of **your** attempts, already submitted. |
+| `language` | string (query) | no | `en` or `ar`. |
+
+- **Request body:** none.
+- **Success:** `200 OK`, a bare `RetryQuestionsDto`:
+
+```json
+{
+  "attemptId": 42,
+  "quizId": 15,
   "hintsStatus": "Generated",
-  "retryQuestions": [
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "questions": [
     {
       "questionId": 102,
       "questionText": "ما وحدة قياس المقاومة الكهربية؟",
@@ -2659,44 +2940,29 @@ If a concurrent submit of the **same** attempt wins the race, this request retur
       "points": 2,
       "currentHint": "افتكر إن الوحدة اسمها على اسم العالم الألماني.",
       "options": [
-        { "optionId": 1004, "optionText": "الأوم", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1005, "optionText": "الفولت", "imageUrl": null, "displayOrder": 2 },
-        { "optionId": 1006, "optionText": null, "imageUrl": "/uploads/lessons/9b1d3f5a-7c9e-4b2d-8f6a-1c3e5a7b9d0f.png", "displayOrder": 3 }
+        { "optionId": 1004, "optionText": "الأوم", "displayOrder": 1 },
+        { "optionId": 1005, "optionText": "الفولت", "displayOrder": 2 },
+        { "optionId": 1006, "imageUrl": "/uploads/lessons/9b1d3f5a-7c9e-4b2d-8f6a-1c3e5a7b9d0f.png", "displayOrder": 3 }
       ]
     }
-  ],
-  "placement": null
+  ]
 }
 ```
-A NotGraded essay would read `{ "questionId": 104, "status": "NotGraded", "awardedPoints": null, "maxPoints": 3, "feedback": null }`, with `earnedPoints: 2` and `pendingPoints: 0`.
 
-| Field | Differences from the Submit response |
+| Field | Meaning |
 |---|---|
-| `scorePercentage` / `correctAnswers` / `completedAt` | The values saved at submit, never recomputed. `completedAt` has no offset. `scorePercentage` comes from `DECIMAL(5,2)`, e.g. `50.00`. |
-| `wrongAnswers` | Count of stored wrong answers. |
-| `essayResults` / `pendingEssayQuestions` / `earnedPoints` / `pendingPoints` | Re-read on every call, so they include grades that arrived after the submit. |
-| `hintsStatus` / `retryQuestions[].currentHint` | Derived from **every hint saved on this attempt**: post-submit AI hints **and** Hint-button hints taken during the attempt. Placement: always `NotRequired` and `[]`. |
-| `retryQuestions[]` | Every wrong question, **including ones deactivated since**. The retry attempt will skip those. |
-| `placement` | For placement attempts: rebuilt from the stored placement (stored `passPercentage`, frozen points, current level list). `null` otherwise. |
-| `languageFallbackApplied` | Refers to `retryQuestions` text only. |
+| `hintsStatus` | `NotRequired`: nothing was wrong (also always the case for placement and level-skip, which are never retried). `Pending`: the AI is still writing — ask again, or wait for the push. `Generated`: every question has a hint. `Partial`: some do. `Unavailable`: none could be produced. **The retry works in every one of these states** — a missing hint is a missing hint, not a blocked retry. |
+| `questions[]` | The wrong MCQ/TrueFalse questions in `displayOrder`, localized, never with `isCorrect`. Includes questions an admin has deactivated since; the retry attempt itself will leave those out and tell the child so. |
+| `questions[].currentHint` | The latest hint saved for that question in this attempt — a background AI hint or a Hint-button hint taken during the attempt. Absent when there is none. |
+| `questions[].points` | The question's **live** points. The retry attempt freezes whatever is live when it starts. |
 
-- **Errors** (`QuizAttemptService.GetResultAsync`):
-
-| Status | When | Example message |
-|---|---|---|
-| 401 | Missing or invalid token | `"غير مصرح لك بالوصول"` |
-| 404 | Attempt does not exist **or belongs to another user** | `"المحاولة رقم 42 غير موجودة"` |
-| 409 | Attempt is still InProgress (not expired): not submitted yet | `"المحاولة رقم 42 لم يتم تسليمها بعد، برجاء إرسال الإجابات"` (attempt 42 has not been submitted yet; please send the answers) |
-| 410 | Attempt is Abandoned, or InProgress past the timeout | `"المحاولة رقم 42 انتهت صلاحيتها قبل تسليمها، برجاء بدء محاولة جديدة"` |
-| 500 | Unexpected fault | `"حدث خطأ داخلي في الخادم"` |
+- **Errors:** identical to `GET …/result` — 401, 404 (missing or another user's), 409 (not submitted yet), 410 (expired), 500.
 
 - **Frontend notes:**
-  - Read-only and idempotent. Safe to call as often as needed. It is the **essay polling endpoint**: repeat while `pendingEssayQuestions > 0`, and stop once it is `0` (timeline and cadence under Submit attempt).
-  - **Recovery algorithm after a submit with no response:** 200 → show it. 409 → resubmit the same body. 410 → start a new attempt.
-  - **Start a retry from here:** `POST /api/quiz-attempts?quizId={quizId}&previousAttemptId={attemptId}`. Only possible when `wrongAnswers > 0` and this attempt has not been retried before. The result does not say whether it was already retried; a second retry returns 400 `"تمت إعادة المحاولة رقم 42 من قبل"`.
-  - Do not cache this response while essays are Pending. Once `pendingEssayQuestions == 0`, it no longer changes, except for `retryQuestions` text and hints if language or content changes.
-  - Mocks: `mock_attempt_result.json`, `mock_attempt_result_essay_not_graded.json`, `mock_attempt_result_not_submitted.json`, `mock_attempt_abandoned.json`, `mock_attempt_not_found.json`.
-  - To reopen the caller's last result without an id, use [`GET /api/quiz-attempts/latest`](#get-latest-result).
+  - **When to call it:** when the child taps "try again", or as soon as the `hintsReady` push arrives on [the learner hub](#real-time-updates-signalr).
+  - **If you get `Pending`** and want the hint before showing the retry, wait for the push or re-poll every few seconds — the job normally finishes within seconds of the submit. Do not block the retry on it: the child can retry without hints.
+  - Then start the retry: `POST /api/quiz-attempts?quizId={quizId}&previousAttemptId={attemptId}`, and render from **that** response.
+  - Mocks: `mock_retry_questions.json`, `mock_retry_questions_pending.json`.
 
 ---
 
@@ -3181,6 +3447,89 @@ The thresholds are compared exactly on the counts (`correct × 100 ≥ percentag
 
 ---
 
+### Level-skip status
+
+✨ **New in this release.**
+
+`GET /api/level-skip/{levelId}`: may this child try to skip a level, and on what terms?
+
+**What the challenge is.** A child who already knows a level proves it once instead of sitting through every lesson: about ten questions drawn from the level's **own lesson quizzes**, spread round-robin across its lessons (so knowing only lesson one is not enough), against a three-minute clock and three hearts. Passing marks the level's lessons complete, which is what actually opens the next level.
+
+- **Auth:** roles: `Child`.
+- **Headers / language:** `Authorization`. Not localized.
+- **Path parameters:** `levelId` — int, route constraint `:int`.
+- **Request body:** none.
+- **Success:** `200 OK`, a bare `LevelSkipStatusDto`:
+
+```json
+{
+  "levelId": 2,
+  "status": "Available",
+  "quizId": 31,
+  "questionCount": 10,
+  "timeLimitSeconds": 180,
+  "hearts": 3,
+  "passPercentage": 80,
+  "previousAttempts": 0
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `status` | `Available`: offer it. `InProgress`: a run is open — `start` resumes it, and `attemptId` is the one to resume. `Passed`: already skipped; hide the entry point. `Unavailable`: no active level-skip quiz for this level, or its lesson quizzes have nothing to sample. |
+| `quizId` | The quiz the attempt will run against. Absent when `Unavailable`. |
+| `attemptId` | The open attempt. Present only when `InProgress`. |
+| `questionCount`, `timeLimitSeconds`, `hearts`, `passPercentage` | The terms — show these **before** the child commits to a timed run. |
+| `previousAttempts` | How many times this child has already tried. `0` the first time. |
+
+- **Errors:** 401; 403 if not `Child`; 404 `"المستوى رقم 2 غير موجود"`; 500.
+
+---
+
+### Start or resume level-skip challenge
+
+✨ **New in this release.**
+
+`POST /api/level-skip/{levelId}/start`: starts the challenge, or resumes the open one.
+
+- **Auth:** roles: `Child`.
+- **Headers / language:** `Authorization`. Localized: `?language=` → `Accept-Language` → `ar`.
+- **Success:** `200 OK`, a `QuizAttemptResponseDto` — the same shape as any attempt, plus the timed fields:
+
+```json
+{
+  "attemptId": 71,
+  "quizId": 31,
+  "startedAt": "2026-09-21T10:00:00.0000000Z",
+  "resumed": false,
+  "expiresAt": "2026-09-21T10:03:00.0000000Z",
+  "timeLimitSeconds": 180,
+  "hearts": 3,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "removedQuestionIds": [],
+  "questions": [ "…10 questions…" ]
+}
+```
+
+- **Errors:** 400 `"اختبار تخطي المستوى رقم 2 غير متاح حاليًا: لا توجد أسئلة دروس مفعّلة في هذا المستوى"`; 401; 403; 404 `"لا يوجد اختبار تخطي متاح للمستوى رقم 2"`; 500.
+
+- **Frontend notes:**
+  - **Run the countdown from `expiresAt`, not from a local timer started at page load.** On a resumed attempt (`resumed: true`) `expiresAt` is the ORIGINAL deadline, so the child sees the time they have LEFT — closing and reopening the app does not hand them a fresh three minutes.
+  - **Hearts are displayed by the client, decided by the server.** Nothing reports a heart lost mid-run: the client knows which answers are wrong only at submit. Show three hearts and, if you want live feedback, reveal correctness only after the whole run.
+  - Submit with `POST /api/quiz-attempts/{attemptId}/submit` like any attempt. **Submitting after the clock runs out is a 410** — start again.
+  - The result's `levelSkip` object carries the verdict:
+
+    ```json
+    { "levelId": 2, "passed": true, "heartsAllowed": 3, "heartsRemaining": 2, "wrongAnswers": 1, "scorePercentage": 90.00, "passPercentage": 80, "lessonsCompleted": 4 }
+    ```
+
+    `passed: true` means the level's lessons were marked complete (`lessonsCompleted`) and the next level is open.
+  - A failed challenge can be taken again straight away; the next run draws a **different** sample from the same lessons.
+  - Mocks: `mock_level_skip_status.json`, `mock_level_skip_start.json`, `mock_level_skip_result.json`.
+
+---
+
 ## Assessment (admin)
 
 These endpoints are how the Admin dashboard builds assessment content: a **quiz** holds **questions**, and a MultipleChoice or TrueFalse question holds **options**. A question can be classified under a **topic**, and topics are grouped in **categories**. The controllers are `QuizController`, `QuestionController` (file `QuestionController .cs`, with a space), `QuestionOptionController`, `AssessmentCategoryController` and `AssessmentTopicController`, all `[Authorize(Roles = "Admin")]` at class level. The rules live in `AssessmentBL/Services/QuizService.cs`, `QuestionService.cs`, `QuestionOptionService.cs`, `CategoryService.cs` and `TopicService.cs` (shared name and translation checks in `TaxonomyInput.cs`).
@@ -3359,6 +3708,10 @@ A non-numeric `levelId`/`lessonId`/`pageNumber`/`pageSize` or a non-boolean `isA
 
 `POST /api/quizzes`: called by the Admin dashboard.
 
+⚠️ **Changed in this release: a new quiz is a DRAFT.** It comes back with `isActive: false` and no child can reach it. Publish it with [`PATCH /api/quizzes/{quizId}/active?isActive=true`](#activate--deactivate-quiz) once it has its questions.
+
+**Why.** Creation used to publish immediately, which collided head-on with "only one active placement test" and "only one active quiz per lesson": preparing a replacement meant taking the live quiz **down first** and leaving children with no quiz while the new one was written — or simply being refused with 409 at the moment of creation. Drafts occupy no slot, so an admin can prepare **any number** of them alongside the quiz that is running, and the one-active rule now applies only at the moment of publishing.
+
 - **Auth:** roles: `Admin` (class level).
 - **Headers / language:** `Authorization: Bearer <token>`, `Content-Type: application/json`. Not localized. The title is stored as sent (trimmed).
 - **Path / query parameters:** none.
@@ -3368,8 +3721,8 @@ A non-numeric `levelId`/`lessonId`/`pageNumber`/`pageSize` or a non-boolean `isA
 |---|---|---|---|
 | `title` | string | yes | Non-blank (implicit required); trimmed; ≤ 300 characters after trimming. |
 | `description` | string \| null | no | Stored as sent (not trimmed); no length limit (`NVARCHAR(MAX)`). |
-| `quizType` | string | yes | One of `LevelAssessment`, `LessonQuiz`, `LessonReview`, `Standalone`, `Placement` (case-sensitive). The DTO property is a non-nullable `string`, so a missing or blank value is rejected by model validation (400 `ValidationProblemDetails`). The service's "blank → `Standalone`" fallback in `QuizService.CreateAsync` is therefore not reachable over HTTP. |
-| `levelId` | int \| null | depends | Required for `LevelAssessment` and must be `null` for every other type. The level must exist (`ILevelCatalog.GetLevelsInOrderAsync`). |
+| `quizType` | string | yes | One of `LevelAssessment`, `LessonQuiz`, `LessonReview`, `Standalone`, `Placement`, ✨ `LevelSkip`. ⚠️ **Now case-insensitive** — `"lessonquiz"` works. The DTO property is a non-nullable `string`, so a missing or blank value is rejected by model validation (400). |
+| `levelId` | int \| null | depends | Required for `LevelAssessment` and ✨ `LevelSkip`, and must be `null` for every other type. The level must exist (`ILevelCatalog.GetLevelsInOrderAsync`). |
 | `lessonId` | int \| null | depends | Required for `LessonQuiz` / `LessonReview` and must be `null` for every other type. The lesson must exist; **it may be unpublished** (authoring before release is allowed). |
 
 Validation order in `QuizService.CreateAsync`:
@@ -3511,7 +3864,13 @@ Validation order in `QuizService.CreateAsync`:
 
 ### Activate / deactivate quiz
 
-`PATCH /api/quizzes/{quizId}/active?isActive={true|false}`: called by the Admin dashboard.
+`PATCH /api/quizzes/{quizId}/active?isActive={true|false}`: called by the Admin dashboard. **This is the publish button.**
+
+⚠️ **Changed in this release: publishing now retires the incumbent automatically.**
+
+This is where the "only one active" rules apply — one Placement test overall, one quiz per lesson, ✨ one level-skip challenge per level. They used to be enforced by **refusing**: the admin was told to go and stop the old quiz first, which meant a gap with no quiz at all and two requests to get right. Publishing now **swaps**, in one transaction: the quiz holding the slot moves back to draft as this one goes live, so there is never an instant with two active quizzes or none.
+
+Attempts already in progress on the retired quiz are unaffected — their questions and answer key were frozen when they started.
 
 - **Auth:** roles: `Admin` (class level).
 - **Headers / language:** `Authorization: Bearer <token>`. Not localized.
@@ -3532,14 +3891,14 @@ Validation order in `QuizService.CreateAsync`:
 | 401 | Missing, invalid or expired token | `{"success":false,"message":"غير مصرح لك بالوصول","data":null}` |
 | 403 | Not `Admin` | `{"success":false,"message":"ليس لديك صلاحية","data":null}` |
 | 404 | No quiz with this id | `{"success":false,"message":"الاختبار رقم 15 غير موجود","data":null}` |
-| 409 | Activating would create a second active Placement quiz, or a second active LessonQuiz for the lesson | `{"success":false,"message":"يوجد اختبار تحديد مستوى مفعّل بالفعل، أوقفه أولًا","data":null}` / `{"success":false,"message":"يوجد اختبار مفعّل بالفعل للدرس رقم 5، أوقفه أولًا","data":null}` |
-| 409 | Lost the race at the database | `{"success":false,"message":"يوجد اختبار مفعّل آخر لنفس الغرض، أوقفه أولًا","data":null}` |
+| 409 | **Only** when another admin published into the same slot at the same instant. Nothing was saved, so publishing again succeeds. | `{"success":false,"message":"تم تفعيل اختبار آخر لنفس الغرض في نفس اللحظة، برجاء إعادة المحاولة","data":null}` |
 | 500 | Unexpected server fault | `{"success":false,"message":"حدث خطأ داخلي في الخادم","data":null}` |
 
 - **Frontend notes:**
   - Idempotent and safe to retry.
   - The body is empty, so after 204 either flip `isActive` locally or refetch `GET /api/quizzes/{quizId}` (which also gives the new `updatedAt`).
-  - On a 409 when activating, offer a shortcut: find the active one with `GET /api/quizzes?quizType=Placement&isActive=true` (or `quizType=LessonQuiz&lessonId=…&isActive=true`), deactivate it, then retry.
+  - ⚠️ **The "deactivate the old one first" flow is gone.** A 409 no longer means "a slot is taken" — it only means two admins published at the same instant, and the fix is to retry. If your dashboard has a "stop the current quiz first" prompt, remove it.
+  - **A quiz that was live may now silently become a draft** when a colleague publishes a replacement. Refetch the list after publishing (`GET /api/quizzes?quizType=…&isActive=true`) rather than assuming local state.
   - Activation does **not** check that the quiz has active questions.
   - Effects on children:
     - A deactivated LessonQuiz disappears from `GET /api/quizzes/for-lesson/{lessonId}` (404).
@@ -4736,5 +5095,373 @@ Validation order in `TopicService.UpdateAsync`:
 - **Frontend notes:**
   - Idempotent and safe to retry.
   - **Effects on children.** An inactive topic leaves the progress map of children who never practised it; children who practised it keep seeing their progress. Its questions keep the topic, are still asked, and still count in its statistics. Deactivating does not remove it from `GET /api/user-topic-stats/{topicId}`.
+
+---
+
+### Set the correct option (atomic)
+
+✨ **New in this release.**
+
+`PATCH /api/questions/{questionId}/correct-option` — Admin.
+
+**Why it exists.** Changing which option is correct used to take **four requests**: deactivate the question, clear `isCorrect` on the old option, set it on the new one, activate again. Four, because a question may never have two correct options (`UQ_QuestionOptions_OneCorrectPerQuestion`) and an active question may never have none.
+
+Four requests means four chances to lose the connection. If the admin's network dropped at step 3, the question was left **deactivated and broken** — invisible to children, with no correct answer — and nothing in the dashboard said so. That is the classic partial-failure shape, and it was entirely avoidable.
+
+This does the whole change inside **one database transaction**: either the answer moves, or nothing changed and the question is still answerable. The question is never deactivated on the way.
+
+- **Auth:** roles: `Admin`.
+- **Request body:**
+
+```json
+{ "correctOptionId": 1005 }
+```
+
+- **Success:** `200 OK`, the question's options in display order (the same shape `GET /api/question-options?questionId=` returns):
+
+```json
+[
+  { "id": 1004, "optionText": "الأوم", "isCorrect": false, "displayOrder": 1 },
+  { "id": 1005, "optionText": "الفولت", "isCorrect": true, "displayOrder": 2 }
+]
+```
+
+- **Errors:**
+
+| Status | When | Example message |
+|---|---|---|
+| 400 | The question is an Essay (it has no answer key) | `"السؤال رقم 104 سؤال مقالي وليس له إجابة صحيحة"` |
+| 401 / 403 | Not signed in / not `Admin` | — |
+| 404 | No such question | `"السؤال رقم 102 غير موجود"` |
+| 404 | The option exists but belongs to another question | `"الاختيار رقم 1005 لا يخص السؤال رقم 102"` |
+| 409 | Lost a race with another admin; nothing was saved | `"السؤال رقم 102 له إجابة صحيحة بالفعل"` |
+
+- **Frontend notes:**
+  - **Idempotent.** Sending the option that is already the only correct one returns `200` and changes nothing.
+  - **Attempts in flight are unaffected.** Every attempt is graded against the answer key frozen in its own snapshot when it started, so a child mid-quiz is neither helped nor harmed by this edit.
+  - Use this instead of `PUT /api/question-options/{optionId}` for the "which answer is correct" radio button. `PUT` is still the right call for editing an option's *text*, image or order.
+
+---
+
+### Reorder questions
+
+✨ **New in this release.** `PUT /api/questions/order?quizId={quizId}` — Admin.
+
+### Reorder question options
+
+✨ **New in this release.** `PUT /api/questions/{questionId}/options/order` — Admin.
+
+Both take the absolute order and are **idempotent**, for the same reason the Content reorder endpoints are ([Reorder levels](#reorder-levels)): a pairwise swap applied twice reverts itself, so a retried request silently undid the admin's change.
+
+- **Request body:** `{ "orderedIds": [103, 101, 102] }` — every id of the set, each once, first to last. The server renumbers `1..n` in one transaction (through a staging pass, so the unique `(quizId, displayOrder)` index is never violated part-way).
+- **Success:** `200 OK`, the reordered questions (with their options) or the reordered options.
+- **Errors:** `400` for a missing id (`"يجب إرسال ترتيب الأسئلة كاملة؛ العناصر الناقصة: 104"`), a duplicate, or an id from another quiz/question; `401`/`403`; `404` for an unknown quiz or question.
+
+---
+
+## Gamification
+
+✨ **The whole module is new in this release.** Controller: `GamificationController` (`ElectroWorld/Controllers/Gamification`), backed by `GamificationBL`. Responses are bare DTOs, like Assessment.
+
+**The loop.** A child studies, earns **Sparks**, builds a **streak**, and spends the Sparks protecting the streak (or on cosmetics). The streak is the engine: nobody wants to lose a 15-day run they worked for, and that loss aversion is what gets the app opened on a day the child would otherwise skip.
+
+**Nothing in this section grants anything.** Sparks and streak days are earned by finishing lessons and quizzes, automatically, and arrive in the `rewards` field of those responses. These endpoints are where the child **sees** what they have and **spends** it.
+
+### How Sparks are earned
+
+| Activity | Sparks | Setting |
+|---|---|---|
+| Finish a lesson (`POST /api/content/lessons/{id}/progress`) | 5 | `Gamification:LessonCompletedSparks` |
+| Submit any quiz attempt | 5 | `Gamification:QuizCompletedSparks` |
+| …with **no wrong answers at all** (bonus, on top) | +10 | `Gamification:PerfectScoreBonusSparks` |
+| Finish the placement test | 20 | `Gamification:PlacementCompletedSparks` |
+| Pass a level-skip challenge | 25 | `Gamification:LevelSkipPassedSparks` |
+| Keep a streak for 7 consecutive days (reward box) | 50 | `Gamification:StreakMilestoneDays` / `…Sparks` |
+
+**Every award is idempotent.** A replayed submit or a retried "mark lesson complete" pays **once** — the database enforces it on `(user, reason, reference)`, so it holds even against two simultaneous requests. A replayed activity also does not advance the streak: submitting the same attempt twice is not two days of learning.
+
+### How the streak works
+
+- It counts **days**, not sessions. Several activities on one day advance it once.
+- Come back the next day → the streak grows.
+- **Miss a day with a freeze in hand** → the freeze is spent automatically and the streak survives. Two missed days cost two freezes.
+- **Miss more days than you have freezes** → the streak restarts at 1, and the freezes are **not** taken. Spending them on a rescue that did not happen would be the one thing more discouraging than losing the streak.
+- A freeze is never "used" by the child: it is spent by the system on their return.
+
+---
+
+### My Sparks, streak and inventory
+
+`GET /api/gamification/me`
+
+- **Auth:** Bearer token (any role).
+- **Headers / language:** `Authorization`. Localized: `?language=` → `Accept-Language` → `ar`.
+- **Caching:** `PerLearner` — up to 15 s, keyed on the caller's token ([Response caching](#response-caching)).
+- **Success:** `200 OK`, a bare `LearnerGamificationDto`:
+
+```json
+{
+  "language": "ar",
+  "sparksBalance": 145,
+  "lifetimeSparks": 320,
+  "currentStreakDays": 4,
+  "longestStreakDays": 9,
+  "lastActivityOn": "2026-09-21",
+  "activeToday": true,
+  "streakSafeForDays": 2,
+  "streakFreezes": 1,
+  "maxStreakFreezes": 2,
+  "streakFreezesUsed": 3,
+  "daysToNextMilestone": 3,
+  "milestoneSparks": 50,
+  "message": "‏4 أيام متتالية، واصل! باقي 3 أيام على صندوق المكافأة التالي.",
+  "items": [
+    { "itemId": 1, "code": "streak_freeze", "kind": "StreakFreeze", "name": "تجميد السلسلة", "quantity": 1, "isEquipped": false }
+  ],
+  "activeBoosts": []
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `sparksBalance` | Spendable now. `lifetimeSparks` never goes down, so spending cannot erase a record. |
+| `lastActivityOn` | A **date** (`YYYY-MM-DD`), UTC. Absent before the first activity. |
+| `activeToday` | Today already counted — the flame is lit. |
+| `streakSafeForDays` | **The number the child cares about:** how many days the streak survives without doing anything, freezes included. `0` means it breaks unless they learn something today. |
+| `daysToNextMilestone` | Days to the next reward box. |
+| `message` | A ready-to-show sentence in the resolved language. |
+| `items[]` | Everything owned. `isEquipped` applies to `Avatar` items only. |
+| `activeBoosts[]` | Boosts running **right now**, each with `multiplier`, `expiresAt` and `secondsRemaining`. Empty when none is. |
+
+- **Errors:** 401; 500. A learner who has earned nothing gets zeros, **not a 404**.
+- **Frontend notes:** drive the reward bar from this. After a submit or a lesson completion you already have the fresh numbers in that response's `rewards` — no need to call this as well.
+- **Mocks:** `mock_gamification_me.json`, `mock_gamification_me_empty.json`.
+
+---
+
+### The shop
+
+`GET /api/gamification/shop`
+
+- **Auth:** Bearer token (any role). Localized. Cached `PerLearner` (15 s).
+- **Success:** `200 OK`, a bare array:
+
+```json
+[
+  {
+    "itemId": 1,
+    "code": "streak_freeze",
+    "kind": "StreakFreeze",
+    "name": "تجميد السلسلة",
+    "description": "بيحمي سلسلتك لو نسيت تدخل يوم. بيتستخدم لوحده أول ما ترجع.",
+    "priceSparks": 200,
+    "owned": 1,
+    "maxOwned": 2,
+    "canAfford": false,
+    "atMaxOwned": false
+  },
+  {
+    "itemId": 2,
+    "code": "double_xp_15",
+    "kind": "Boost",
+    "name": "نقاط خبرة مضاعفة",
+    "priceSparks": 120,
+    "owned": 0,
+    "boostMultiplier": 2,
+    "boostMinutes": 15,
+    "canAfford": true,
+    "atMaxOwned": false
+  }
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `StreakFreeze`, `Avatar` or `Boost` — what buying it actually does. |
+| `code` | Stable machine name; prefer it over `itemId` when your UI special-cases an item. |
+| `owned` / `maxOwned` | How many the child has, and the cap (absent when there is none). |
+| `canAfford` | Enough Sparks **and** not at the cap — the server has already done the arithmetic, so grey out the tile from this. |
+
+- **Frontend notes:**
+  - **The freeze cap is a design decision, not a limitation.** Two is the default: enough to survive a bad week, not enough to buy ten and disappear for ten days, which would make the streak stop measuring a habit at all.
+  - **Mock:** `mock_gamification_shop.json`.
+
+---
+
+### Buy a shop item
+
+`POST /api/gamification/shop/{itemId}/purchase`
+
+- **Auth:** Bearer token (any role). Localized. Not cached.
+- **Request body:** none.
+- **Success:** `200 OK`:
+
+```json
+{
+  "itemId": 1,
+  "code": "streak_freeze",
+  "name": "تجميد السلسلة",
+  "pricePaid": 200,
+  "sparksBalance": 45,
+  "owned": 2,
+  "message": "اشتريت تجميد السلسلة مقابل 200 شرارة."
+}
+```
+
+Buying a **boost** also returns `activatedBoost` with its `expiresAt` and `secondsRemaining`.
+
+- **Errors:**
+
+| Status | When | Example message |
+|---|---|---|
+| 400 | Not enough Sparks | `"تحتاج 200 شرارة لشراء 'تجميد السلسلة'، ولديك 45 فقط"` |
+| 400 | Already holding the maximum | `"لا يمكنك الاحتفاظ بأكثر من 2 من 'تجميد السلسلة' في نفس الوقت"` |
+| 400 | The item is not for sale | `"العنصر 'X' غير متاح للشراء حاليًا"` |
+| 400 | The child has never earned anything | `"لا توجد شرارات كافية، أكمل درسًا أو اختبارًا لتجمع شرارات"` |
+| 401 | Missing or invalid token | — |
+| 404 | No such item | `"العنصر رقم 9 غير موجود"` |
+| 409 | A concurrent purchase spent the same Sparks first. **Nothing was charged.** | `"تم تغيير رصيد الشرارات في نفس اللحظة، برجاء إعادة المحاولة"` |
+
+- **Frontend notes:**
+  - **Not idempotent, and deliberately so:** buying two freezes is two purchases, not a replay of one. Disable the button while the request is in flight, and on a 409 refresh the balance before retrying — the balance is never left negative either way.
+  - **Buying a boost starts its clock immediately.** A timed multiplier sitting unused in an inventory would only invite "why is my double XP gone?". Say so on the confirm dialog.
+  - A freeze goes into the inventory and is spent by the system, automatically, on the child's return after a missed day.
+  - Mocks: `mock_gamification_purchase.json`, `mock_gamification_purchase_too_poor.json`.
+
+---
+
+### Equip an avatar item
+
+`POST /api/gamification/items/{itemId}/equip`
+
+- **Auth:** Bearer token (any role). Localized.
+- **Success:** `200 OK`, the whole `LearnerGamificationDto` again, so the app can redraw without a second call. One avatar item is worn at a time; the previous one is taken off in the same save.
+- **Errors:** 400 `"هذا العنصر ليس من عناصر المظهر"` (not a cosmetic); 401; 404 `"لا تمتلك العنصر رقم 4"` (you do not own it).
+
+---
+
+## Real-time updates (SignalR)
+
+✨ **New in this release.**
+
+**Endpoint:** `/hubs/learner` (SignalR). **Authenticated**, same JWT as the REST API.
+
+**Why it exists.** A submission now returns before the AI has written its hints or graded its essays. Without a push, the only way to find out they were done was to ask every couple of minutes — a battery-expensive guess that is usually wrong in both directions. The hub tells the app the moment the work lands.
+
+**It is one-way.** The hub only sends; it never takes a command. Everything it announces also has an ordinary endpoint, so a dropped connection can only ever cost a notification, never a result.
+
+### Connecting
+
+The handshake cannot send an `Authorization` header over a browser WebSocket, so the hub — **and only the hub** — also accepts the token in the query string:
+
+```
+wss://<host>/hubs/learner?access_token=<accessToken>
+```
+
+The SignalR Dart/JS clients do this for you when you supply an access-token factory. Each connection joins a group named after the caller's own user id, taken from the token: a client cannot ask to listen to anybody else.
+
+### Messages
+
+| Method | Payload | What to do |
+|---|---|---|
+| `hintsReady` | `{ attemptId, hintsStatus, endpoint }` | The hints for that attempt's wrong answers are written. Fetch [`GET /api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions). |
+| `essaysGraded` | `{ attemptId, gradedCount, pendingCount, endpoint }` | Essay grades landed. Refresh [`GET /api/quiz-attempts/{attemptId}/result`](#get-saved-result-recovery-and-essay-polling). |
+| `rewardsChanged` | `{ sparksBalance, sparksEarned, currentStreakDays, freezesAvailable, streakExtendedToday, freezesSpent, message, endpoint }` | Refresh the reward bar from [`GET /api/gamification/me`](#my-sparks-streak-and-inventory). |
+
+Every payload carries `endpoint`: the REST call that returns the same information. Use it rather than trusting the payload alone.
+
+### What a client must still do
+
+**Treat the hub as an optimisation, never as the source of truth.** A push is missed whenever the app is backgrounded, offline, reconnecting, or simply started after the work finished.
+
+- Always **re-read the relevant endpoint when a screen opens**, and on pull-to-refresh.
+- Keep polling as the fallback while `pendingEssayQuestions > 0` or `hintsStatus == "Pending"`, just at a relaxed cadence (1–2 minutes) rather than an aggressive one.
+- Nothing is lost by ignoring the hub entirely: every state it announces is reachable from REST.
+
+---
+
+## Typical frontend flows
+
+**First run (new child).**
+1. `POST /api/auth/guest` or `/register` → tokens.
+2. `GET /api/placement` → `Required` → `POST /api/placement/start`.
+3. Answer, then `POST /api/quiz-attempts/{id}/submit`.
+4. `result.placement.levelId` is where to start them. **The levels below it are already marked complete** (`placement.lessonsCompleted`), so the map shows them done rather than as homework the child never did — and the lesson gate lets them straight into the level they were placed at.
+5. Show `result.rewards` (+20 Sparks, streak = 1).
+
+**A lesson.**
+1. `GET /api/content/levels/{levelId}/access` → draw the list with padlocks.
+2. Open an unlocked lesson: `GET /api/content/lessons/{id}` (403 means it is locked — you should not have offered it).
+3. `POST /api/content/lessons/{id}/progress` when finished → `rewards` (+5 Sparks, streak advanced).
+4. `GET /api/quizzes/for-lesson/{id}` → the card → `POST /api/quiz-attempts?quizId=` → answer → `submit`.
+5. Passing the quiz unlocks the next lesson.
+
+**A wrong answer.**
+1. `submit` → `wrongAnswers > 0`, `hintsStatus: "Pending"`.
+2. Wait for `hintsReady`, or just wait for the child to tap "try again".
+3. `GET /api/quiz-attempts/{id}/retry-questions` → show the mistakes with their hints. `notice` explains any question that has since been removed.
+4. `POST /api/quiz-attempts?quizId=&previousAttemptId=` → render from **that** response → `submit`.
+
+**Skipping a level the child already knows.**
+1. `GET /api/level-skip/{levelId}` → `Available`, with the terms.
+2. Show the terms, get a deliberate confirmation (it is timed).
+3. `POST /api/level-skip/{levelId}/start` → run the countdown from `expiresAt`.
+4. `submit` → `result.levelSkip.passed` → the level's lessons are complete and the next level is open.
+
+**Protecting a streak.**
+1. `GET /api/gamification/me` → `streakSafeForDays: 0` → warn the child.
+2. `GET /api/gamification/shop` → `canAfford` on `streak_freeze`.
+3. `POST /api/gamification/shop/{itemId}/purchase` → it sits in the inventory.
+4. Next time they miss a day, it is spent automatically and `rewards.freezesSpent` on their next activity says so.
+
+---
+
+## Changes in this release (breaking for clients)
+
+Ordered by how likely they are to break an existing client.
+
+### 1. `null` fields are omitted from responses
+
+An optional field with no value is now **absent** from the JSON instead of present as `null`. Treat an absent key exactly as you treated `null`. Dart's `json['x']` already returns `null` for a missing key, so subscript access is unaffected; generated models with non-nullable fields, `containsKey` checks and `!`-assertions need relaxing. Collections are still always written.
+
+### 2. `submit` takes `answers`, not `mistakes`
+
+`POST /api/quiz-attempts/{id}/submit` renamed the request list. An un-migrated client gets `400 "يجب الإجابة على كل أسئلة الاختبار…"` listing every MCQ/TF question, because a missing list binds as empty.
+
+### 3. `retryQuestions` left the result
+
+Both `submit` and `GET …/result` dropped it. Fetch [`GET /api/quiz-attempts/{attemptId}/retry-questions`](#get-retry-questions) instead. A fresh submission reports `hintsStatus: "Pending"`.
+
+### 4. `GET /api/quizzes/for-lesson/{lessonId}` dropped `questions`
+
+It is a summary now (`totalQuestions`, `totalPoints`). Render the quiz from `POST /api/quiz-attempts`, which is the only place the questions are frozen.
+
+### 5. Validation errors use the envelope
+
+`ValidationProblemDetails` (`title`/`status`/`errors`, no `success`) is gone. Model-binding 400s now return `{ success, message, data }` like every other error. If you special-cased that shape, delete the special case.
+
+### 6. `placement.levels` lists every level
+
+It used to omit levels with no placement questions. Every level is now listed; read the new `assessed` flag to tell "asked and failed" (`assessed: true`, score 0) from "nothing to ask" (`assessed: false`).
+
+### 7. Lesson access is gated
+
+`GET /api/content/lessons/{id}` returns **403** for a `Child` who has not passed the previous lesson's quiz. Call [`GET /api/content/levels/{levelId}/access`](#level-access-the-whole-lesson-list-at-once) to draw the list correctly and avoid offering a locked lesson at all. Admins and parents are not gated.
+
+### 8. A new quiz is a draft (Admin dashboard)
+
+`POST /api/quizzes` returns `isActive: false`. Publishing is a separate call, and publishing now retires the incumbent automatically — the "stop the old quiz first" prompt should be removed, and a 409 there now only means two admins clicked at the same instant.
+
+### 9. Starting an attempt resumes instead of duplicating
+
+A second `POST /api/quiz-attempts` for the same quiz returns the attempt that is already open, with `resumed: true`, rather than creating an orphan.
+
+### 10. Enum-shaped strings are case-insensitive
+
+`quizType`, `questionType`, `difficulty` and friends now accept any casing. Responses still carry the canonical spelling, which is what to compare against. Nothing breaks; requests that used to fail now succeed.
+
+### Additions that break nothing
+
+Gamification (`/api/gamification`), the level-skip challenge (`/api/level-skip`), `GET /api/quizzes/for-level/{levelId}`, the lesson-access endpoints, idempotent reorder endpoints for levels/lessons/contents/questions/options, the atomic `PATCH /api/questions/{id}/correct-option`, the SignalR hub at `/hubs/learner`, and a `rewards` object on submit and lesson-completion responses. The `swap-order` endpoints still work but are deprecated.
 
 ---

@@ -13,7 +13,7 @@ namespace ElectroWorld.Api.Controllers;
 /// is how the child's progress map is organised.
 /// </summary>
 [ApiController]
-[Route("api/assessment/categories")]
+[Route("api/Admin/assessment/categories")]
 [Authorize(Roles = "Admin")]
 public class AssessmentCategoryController : ControllerBase
 {

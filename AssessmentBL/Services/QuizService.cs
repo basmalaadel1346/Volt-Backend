@@ -7,6 +7,7 @@ using AssessmentDA.Entities;
 using Microsoft.EntityFrameworkCore;
 using Shared.Common.Abstractions;
 using Shared.Common.Exceptions;
+using Shared.Common.Text;
 using Shared.Content;
 using System.Linq.Expressions;
 
@@ -70,7 +71,13 @@ namespace AssessmentBL.Services
             var query = _db.Quizzes.AsNoTracking();
 
             if (!string.IsNullOrWhiteSpace(filter.QuizType))
-                query = query.Where(q => q.QuizType == filter.QuizType);
+            {
+                // Canonicalized first: the column holds the exact CHECK-constraint
+                // spelling, so filtering on "lessonquiz" must not silently return
+                // nothing. An unknown type still matches nothing, as it should.
+                var quizType = QuizTypes.Normalize(filter.QuizType) ?? filter.QuizType.Trim();
+                query = query.Where(q => q.QuizType == quizType);
+            }
 
             if (filter.LevelId.HasValue)
                 query = query.Where(q => q.LevelId == filter.LevelId.Value);
@@ -127,9 +134,9 @@ namespace AssessmentBL.Services
                          && q.IsActive
                          && q.Questions.Any(question => question.IsActive))
                 .OrderByDescending(q => q.Id)
-                .Select(q => new
+                .Select(q => new QuizHeader
                 {
-                    q.Id,
+                    Id = q.Id,
                     Title =
                         q.QuizTranslations
                             .Where(t => t.LanguageCode == resolvedLanguage)
@@ -150,17 +157,14 @@ namespace AssessmentBL.Services
                             .Select(t => t.Description)
                             .FirstOrDefault()
                         ?? q.Description,
-                    HasRequestedTranslation = q.QuizTranslations.Any(t => t.LanguageCode == resolvedLanguage)
+                    HasRequestedTranslation = q.QuizTranslations.Any(t => t.LanguageCode == resolvedLanguage),
+                    TotalQuestions = q.Questions.Count(question => question.IsActive),
+                    TotalPoints = q.Questions
+                        .Where(question => question.IsActive)
+                        .Sum(question => (int)question.Points)
                 })
                 .FirstOrDefaultAsync(cancellationToken)
                 ?? throw new KeyNotFoundException($"لا يوجد اختبار متاح للدرس رقم {lessonId}");
-
-            // Same child-safe projection the attempt endpoints use: no IsCorrect,
-            // no image descriptions, questions and options in DisplayOrder.
-            var questions = await LocalizedQuestionQuery.Project(
-                    _db.Questions.AsNoTracking().Where(q => q.QuizId == quiz.Id && q.IsActive),
-                    resolvedLanguage)
-                .ToListAsync(cancellationToken);
 
             return new LessonQuizResponseDto
             {
@@ -168,11 +172,94 @@ namespace AssessmentBL.Services
                 LessonId = lessonId,
                 Title = quiz.Title,
                 Description = quiz.Description,
-                TotalQuestions = (short)questions.Count,
+                TotalQuestions = (short)quiz.TotalQuestions,
+                TotalPoints = quiz.TotalPoints,
                 Language = resolvedLanguage,
-                LanguageFallbackApplied = !quiz.HasRequestedTranslation || questions.Any(r => r.UsedFallback),
-                Questions = questions.Select(r => r.ToDto()).ToList()
+                LanguageFallbackApplied = !quiz.HasRequestedTranslation
             };
+        }
+
+        /// <summary>
+        /// The quiz to open for a level: its newest ACTIVE LevelAssessment quiz
+        /// that actually has active questions. Same shape and same rules as the
+        /// per-lesson lookup, so the app resolves "level → quizId" with one call
+        /// instead of paging the admin list.
+        /// </summary>
+        public async Task<LevelQuizResponseDto> GetForLevelAsync(
+            int levelId,
+            string? language = null,
+            CancellationToken cancellationToken = default)
+        {
+            var resolvedLanguage = ContentLanguages.Normalize(language);
+
+            // Levels live in the Content module and Quizzes.LevelId has no FK, so
+            // existence is asked of that module rather than assumed.
+            var levels = await _levels.GetLevelsInOrderAsync(cancellationToken);
+
+            if (!levels.Any(l => l.Id == levelId))
+                throw new KeyNotFoundException($"المستوى رقم {levelId} غير موجود");
+
+            var quiz = await _db.Quizzes
+                .AsNoTracking()
+                .Where(q => q.LevelId == levelId
+                         && q.QuizType == QuizTypes.LevelAssessment
+                         && q.IsActive
+                         && q.Questions.Any(question => question.IsActive))
+                .OrderByDescending(q => q.Id)
+                .Select(q => new QuizHeader
+                {
+                    Id = q.Id,
+                    Title =
+                        q.QuizTranslations
+                            .Where(t => t.LanguageCode == resolvedLanguage)
+                            .Select(t => t.Title)
+                            .FirstOrDefault()
+                        ?? q.QuizTranslations
+                            .Where(t => t.LanguageCode == ContentLanguages.Fallback)
+                            .Select(t => t.Title)
+                            .FirstOrDefault()
+                        ?? q.Title,
+                    Description =
+                        q.QuizTranslations
+                            .Where(t => t.LanguageCode == resolvedLanguage)
+                            .Select(t => t.Description)
+                            .FirstOrDefault()
+                        ?? q.QuizTranslations
+                            .Where(t => t.LanguageCode == ContentLanguages.Fallback)
+                            .Select(t => t.Description)
+                            .FirstOrDefault()
+                        ?? q.Description,
+                    HasRequestedTranslation = q.QuizTranslations.Any(t => t.LanguageCode == resolvedLanguage),
+                    TotalQuestions = q.Questions.Count(question => question.IsActive),
+                    TotalPoints = q.Questions
+                        .Where(question => question.IsActive)
+                        .Sum(question => (int)question.Points)
+                })
+                .FirstOrDefaultAsync(cancellationToken)
+                ?? throw new KeyNotFoundException($"لا يوجد اختبار متاح للمستوى رقم {levelId}");
+
+            return new LevelQuizResponseDto
+            {
+                LevelId = levelId,
+                QuizId = quiz.Id,
+                Title = quiz.Title,
+                Description = quiz.Description,
+                TotalQuestions = (short)quiz.TotalQuestions,
+                TotalPoints = quiz.TotalPoints,
+                Language = resolvedLanguage,
+                LanguageFallbackApplied = !quiz.HasRequestedTranslation
+            };
+        }
+
+        /// <summary>A quiz's localized heading and totals — the shape both lookups project into.</summary>
+        private sealed class QuizHeader
+        {
+            public int Id { get; init; }
+            public string Title { get; init; } = null!;
+            public string? Description { get; init; }
+            public bool HasRequestedTranslation { get; init; }
+            public int TotalQuestions { get; init; }
+            public int TotalPoints { get; init; }
         }
 
         public async Task<QuizResponseDto> CreateAsync(CreateQuizDto request, CancellationToken cancellationToken = default)
@@ -180,14 +267,10 @@ namespace AssessmentBL.Services
             var title = NormalizeTitle(request.Title);
             var quizType = string.IsNullOrWhiteSpace(request.QuizType)
                 ? QuizTypes.Standalone
-                : request.QuizType;
+                : NormalizeQuizType(request.QuizType);
 
-            ValidateQuizType(quizType);
             ValidateTypeMatchesReference(quizType, request.LevelId, request.LessonId);
             await EnsureReferenceExistsAsync(request.LevelId, request.LessonId, cancellationToken);
-
-            // A new quiz starts active, so the one-active-per-slot rule applies now.
-            await EnsureSlotIsFreeAsync(quizType, request.LessonId, excludingQuizId: null, cancellationToken);
 
             var quiz = new Quiz
             {
@@ -196,10 +279,10 @@ namespace AssessmentBL.Services
                 QuizType = quizType,
                 LevelId = request.LevelId,
                 LessonId = request.LessonId,
-                // Set explicitly: the DB default is 1, but `false` is also the
-                // CLR default for bool, so EF cannot tell "unset" from
-                // "deliberately inactive" on insert.
-                IsActive = true,
+                // Set explicitly: the DB default is 1 for databases built before
+                // migration 003, and a draft must be a draft on every database.
+                // No slot check here — a draft takes no slot.
+                IsActive = false,
                 CreatedAt = _clock.UtcNow
             };
 
@@ -218,8 +301,11 @@ namespace AssessmentBL.Services
             // design — a quiz cannot be re-pointed at a different level or
             // lesson after creation, which also keeps
             // CK_Quizzes_TypeMatchesReference satisfied.
+            //
+            // Activating through PUT takes over the slot exactly like
+            // PATCH .../active does, so the two never disagree.
             if (request.IsActive && !quiz.IsActive)
-                await EnsureSlotIsFreeAsync(quiz.QuizType, quiz.LessonId, quizId, cancellationToken);
+                await TakeOverSlotAsync(quiz, cancellationToken);
 
             quiz.Title = NormalizeTitle(request.Title);
             quiz.Description = request.Description;
@@ -231,6 +317,13 @@ namespace AssessmentBL.Services
             return ToResponse(quiz);
         }
 
+        /// <summary>
+        /// Publishes a draft, or takes a running quiz back to draft. This — not
+        /// creation — is where "only one active placement test" and "only one
+        /// active quiz per lesson" apply, and the quiz that held the slot is
+        /// retired automatically in the same transaction, so the admin never has
+        /// to stop the old one by hand first.
+        /// </summary>
         public async Task SetActiveAsync(int quizId, bool isActive, CancellationToken cancellationToken = default)
         {
             var quiz = await _db.Quizzes.FirstOrDefaultAsync(q => q.Id == quizId, cancellationToken: cancellationToken)
@@ -240,7 +333,7 @@ namespace AssessmentBL.Services
                 return;
 
             if (isActive)
-                await EnsureSlotIsFreeAsync(quiz.QuizType, quiz.LessonId, quizId, cancellationToken);
+                await TakeOverSlotAsync(quiz, cancellationToken);
 
             quiz.IsActive = isActive;
             quiz.UpdatedAt = _clock.UtcNow;
@@ -268,39 +361,46 @@ namespace AssessmentBL.Services
         }
 
         /// <summary>
-        /// One active Placement quiz overall, and one active LessonQuiz per lesson —
-        /// otherwise which quiz a child gets would be a guess. Mirrors the filtered
-        /// unique indexes of migration 007; this turns the common case into a
-        /// readable message, SaveWithSlotConflictAsync covers the race.
+        /// Some quiz types allow only one ACTIVE quiz at a time — one Placement
+        /// test overall, one LessonQuiz per lesson, one LevelSkip per level —
+        /// because otherwise which quiz a child gets would be a guess. Drafts are
+        /// unlimited; the rule bites only here, when a draft is published.
+        ///
+        /// Rather than refusing with "stop the old one first", the quiz currently
+        /// holding the slot is moved back to draft in this same SaveChanges: the
+        /// swap is atomic, so there is never an instant with two active quizzes
+        /// (which the filtered unique indexes would reject) or none.
         /// </summary>
-        private async Task EnsureSlotIsFreeAsync(
-            string quizType,
-            int? lessonId,
-            int? excludingQuizId,
-            CancellationToken cancellationToken)
+        private async Task TakeOverSlotAsync(Quiz quiz, CancellationToken cancellationToken)
         {
-            var taken = quizType switch
+            var incumbents = quiz.QuizType switch
             {
-                QuizTypes.Placement => await _db.Quizzes.AsNoTracking().AnyAsync(
-                    q => q.QuizType == QuizTypes.Placement
-                      && q.IsActive
-                      && (excludingQuizId == null || q.Id != excludingQuizId.Value),
-                    cancellationToken),
+                QuizTypes.Placement => await _db.Quizzes
+                    .Where(q => q.QuizType == QuizTypes.Placement && q.IsActive && q.Id != quiz.Id)
+                    .ToListAsync(cancellationToken),
 
-                QuizTypes.LessonQuiz => await _db.Quizzes.AsNoTracking().AnyAsync(
-                    q => q.QuizType == QuizTypes.LessonQuiz
-                      && q.LessonId == lessonId
-                      && q.IsActive
-                      && (excludingQuizId == null || q.Id != excludingQuizId.Value),
-                    cancellationToken),
+                QuizTypes.LessonQuiz => await _db.Quizzes
+                    .Where(q => q.QuizType == QuizTypes.LessonQuiz
+                             && q.LessonId == quiz.LessonId
+                             && q.IsActive
+                             && q.Id != quiz.Id)
+                    .ToListAsync(cancellationToken),
 
-                _ => false
+                QuizTypes.LevelSkip => await _db.Quizzes
+                    .Where(q => q.QuizType == QuizTypes.LevelSkip
+                             && q.LevelId == quiz.LevelId
+                             && q.IsActive
+                             && q.Id != quiz.Id)
+                    .ToListAsync(cancellationToken),
+
+                _ => []
             };
 
-            if (taken)
-                throw new ConflictException(quizType == QuizTypes.Placement
-                    ? "يوجد اختبار تحديد مستوى مفعّل بالفعل، أوقفه أولًا"
-                    : $"يوجد اختبار مفعّل بالفعل للدرس رقم {lessonId}، أوقفه أولًا");
+            foreach (var incumbent in incumbents)
+            {
+                incumbent.IsActive = false;
+                incumbent.UpdatedAt = _clock.UtcNow;
+            }
         }
 
         private async Task SaveWithSlotConflictAsync(CancellationToken cancellationToken)
@@ -311,9 +411,14 @@ namespace AssessmentBL.Services
             }
             catch (DbUpdateException ex) when (
                 ex.IsUniqueViolationOf("UQ_Quizzes_OneActivePlacement")
-             || ex.IsUniqueViolationOf("UQ_Quizzes_OneActiveLessonQuizPerLesson"))
+             || ex.IsUniqueViolationOf("UQ_Quizzes_OneActiveLessonQuizPerLesson")
+             || ex.IsUniqueViolationOf("UQ_Quizzes_OneActiveLevelSkipPerLevel"))
             {
-                throw new ConflictException("يوجد اختبار مفعّل آخر لنفس الغرض، أوقفه أولًا", ex);
+                // TakeOverSlotAsync retires the incumbent, so this is only reached
+                // when another admin published into the same slot at the same
+                // instant. Nothing was saved; publishing again succeeds.
+                throw new ConflictException(
+                    "تم تفعيل اختبار آخر لنفس الغرض في نفس اللحظة، برجاء إعادة المحاولة", ex);
             }
         }
 
@@ -329,11 +434,12 @@ namespace AssessmentBL.Services
             return trimmed;
         }
 
-        private static void ValidateQuizType(string quizType)
-        {
-            if (!QuizTypes.All.Contains(quizType))
-                throw new ArgumentException($"نوع الاختبار '{quizType}' غير صالح", nameof(quizType));
-        }
+        // Casing does not matter — "lessonquiz" arrives as the canonical
+        // "LessonQuiz", which is what CK_Quizzes_QuizType allows.
+        private static string NormalizeQuizType(string quizType) =>
+            QuizTypes.Normalize(quizType)
+            ?? throw new ArgumentException(
+                $"نوع الاختبار '{quizType}' غير صالح ({CanonicalValues.Describe(QuizTypes.All)})", nameof(quizType));
 
         // Mirrors CK_Quizzes_TypeMatchesReference. Validated here so the caller
         // gets a readable message instead of a raw SQL constraint violation.
@@ -341,7 +447,7 @@ namespace AssessmentBL.Services
         {
             var valid = quizType switch
             {
-                QuizTypes.LevelAssessment => levelId.HasValue && !lessonId.HasValue,
+                QuizTypes.LevelAssessment or QuizTypes.LevelSkip => levelId.HasValue && !lessonId.HasValue,
                 QuizTypes.LessonQuiz or QuizTypes.LessonReview => lessonId.HasValue && !levelId.HasValue,
                 QuizTypes.Standalone or QuizTypes.Placement => !levelId.HasValue && !lessonId.HasValue,
                 _ => false

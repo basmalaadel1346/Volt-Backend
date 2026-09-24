@@ -1,4 +1,4 @@
-namespace AssessmentBL.Services.Constants
+﻿namespace AssessmentBL.Services.Constants
 {
     /// <summary>Mirrors CK_QuizAttemptEssayAnswers_Status.</summary>
     public static class EssayAnswerStatuses
@@ -17,10 +17,18 @@ namespace AssessmentBL.Services.Constants
         public const string NotGraded = "NotGraded";
     }
 
-    /// <summary>Mirrors CK_QuizAttemptEssayAnswers_GradedBy. The AI is the only grader.</summary>
+    /// <summary>Mirrors CK_QuizAttemptEssayAnswers_GradedBy.</summary>
     public static class EssayGraders
     {
+        /// <summary>The normal grader.</summary>
         public const string Ai = "Ai";
+
+        /// <summary>
+        /// The fallback: the admin's keywords for the question, matched against the
+        /// child's answer. Only ever used once the AI has definitively not graded
+        /// the answer.
+        /// </summary>
+        public const string Keywords = "Keywords";
     }
 
     /// <summary>
@@ -37,5 +45,18 @@ namespace AssessmentBL.Services.Constants
 
         /// <summary>Every allowed attempt failed to produce a usable grade; the essay is NotGraded.</summary>
         public const string Failed = "Failed";
+
+        /// <summary>
+        /// The AI did not grade it, and the question's keywords did instead. The
+        /// essay is Graded, by Keywords rather than by Ai.
+        /// </summary>
+        public const string Fallback = "Fallback";
+
+        /// <summary>
+        /// The grading deadline passed with the answer still Pending and no
+        /// keywords to fall back on; the essay is NotGraded. This is what stops an
+        /// essay sitting Pending forever when the AI never comes back.
+        /// </summary>
+        public const string TimedOut = "TimedOut";
     }
 }

@@ -9,9 +9,7 @@
     {
       "questionId": 104,
       "status": "Pending",
-      "awardedPoints": null,
-      "maxPoints": 3,
-      "feedback": null
+      "maxPoints": 3
     }
   ],
   "correctAnswers": 2,
@@ -22,23 +20,21 @@
   "pendingPoints": 3,
   "language": "en",
   "languageFallbackApplied": false,
-  "hintsStatus": "Generated",
-  "retryQuestions": [
-    {
-      "questionId": 101,
-      "questionText": "What is voltage?",
-      "questionType": "MultipleChoice",
-      "imageUrl": null,
-      "difficulty": "Easy",
-      "displayOrder": 1,
-      "points": 1,
-      "currentHint": "Think about what pushes electric charges to move from one point of a circuit to another.",
-      "options": [
-        { "optionId": 1001, "optionText": "Electrical potential difference", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1002, "optionText": "Resistance to current", "imageUrl": null, "displayOrder": 2 },
-        { "optionId": 1003, "optionText": "Rate of current flow", "imageUrl": null, "displayOrder": 3 }
-      ]
-    }
-  ],
-  "placement": null
+  "hintsStatus": "Pending",
+  "rewards": {
+    "sparksEarned": 5,
+    "sparksBalance": 145,
+    "currentStreakDays": 4,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      {
+        "reason": "QuizCompleted",
+        "sparks": 5,
+        "message": "‏+5 شرارة لإنهاء الاختبار"
+      }
+    ]
+  }
 }

@@ -15,7 +15,6 @@
   "language": "ar",
   "languageFallbackApplied": false,
   "hintsStatus": "NotRequired",
-  "retryQuestions": [],
   "placement": {
     "levelId": 2,
     "levelTitle": "المستوى الثاني: الدوائر الكهربية",
@@ -32,7 +31,8 @@
         "totalPoints": 4,
         "earnedPoints": 4,
         "scorePercentage": 100,
-        "mastered": true
+        "mastered": true,
+        "assessed": true
       },
       {
         "levelId": 2,
@@ -42,7 +42,8 @@
         "totalPoints": 4,
         "earnedPoints": 2,
         "scorePercentage": 50,
-        "mastered": false
+        "mastered": false,
+        "assessed": true
       },
       {
         "levelId": 3,
@@ -52,7 +53,36 @@
         "totalPoints": 4,
         "earnedPoints": 1,
         "scorePercentage": 25,
-        "mastered": false
+        "mastered": false,
+        "assessed": true
+      },
+      {
+        "levelId": 4,
+        "levelTitle": "المستوى الرابع: الإلكترونيات",
+        "questionsAsked": 0,
+        "correctAnswers": 0,
+        "totalPoints": 0,
+        "earnedPoints": 0,
+        "scorePercentage": 0,
+        "mastered": false,
+        "assessed": false
+      }
+    ],
+    "lessonsCompleted": 4
+  },
+  "rewards": {
+    "sparksEarned": 20,
+    "sparksBalance": 20,
+    "currentStreakDays": 1,
+    "longestStreakDays": 1,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      {
+        "reason": "PlacementCompleted",
+        "sparks": 20,
+        "message": "‏+20 شرارة لاجتياز اختبار تحديد المستوى"
       }
     ]
   }

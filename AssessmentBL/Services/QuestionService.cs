@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Linq.Expressions;
 using AssessmentBL.Services.Constants;
 using Shared.Common.Exceptions;
+using Shared.Common.Text;
 
 namespace AssessmentBL.Services
 {
@@ -28,6 +29,7 @@ namespace AssessmentBL.Services
                 Difficulty = question.Difficulty,
                 DisplayOrder = question.DisplayOrder,
                 Points = question.Points,
+                EssayKeywords = question.EssayKeywords,
                 IsActive = question.IsActive,
                 CreatedAt = question.CreatedAt,
                 Options = question.QuestionOptions
@@ -83,12 +85,13 @@ namespace AssessmentBL.Services
                 .FirstOrDefaultAsync(cancellationToken)
                 ?? throw new KeyNotFoundException($"الاختبار رقم {request.QuizId} غير موجود");
 
-            // The placement quiz owns no questions: it samples each level's
-            // LevelAssessment quiz (PlacementEngine). A question added here would
-            // never be asked.
-            if (quizType == QuizTypes.Placement)
-                throw new BusinessRuleException(
-                    "اختبار تحديد المستوى يأخذ أسئلته من اختبارات تقييم المستويات، أضف السؤال إلى اختبار تقييم المستوى المناسب");
+            // A sampled quiz owns no questions: the placement test draws from each
+            // level's LevelAssessment quiz and the level-skip challenge from the
+            // level's lesson quizzes. A question added here would never be asked.
+            if (QuizTypes.IsSampled(quizType))
+                throw new BusinessRuleException(quizType == QuizTypes.Placement
+                    ? "اختبار تحديد المستوى يأخذ أسئلته من اختبارات تقييم المستويات، أضف السؤال إلى اختبار تقييم المستوى المناسب"
+                    : "اختبار تخطي المستوى يأخذ أسئلته من اختبارات دروس المستوى، أضف السؤال إلى اختبار الدرس المناسب");
 
             if (request.TopicId is int topicId)
                 await EnsureTopicExistsAsync(topicId, cancellationToken);
@@ -111,7 +114,8 @@ namespace AssessmentBL.Services
                 ImageDescription = imageDescription,
                 Difficulty = difficulty,
                 DisplayOrder = request.DisplayOrder,
-                Points = points
+                Points = points,
+                EssayKeywords = NormalizeEssayKeywords(request.EssayKeywords, questionType)
                 // IsActive is left alone on purpose: the DB default is 0, so a
                 // new question starts inactive until an admin publishes it via
                 // SetActiveAsync (and it stays out of every quiz attempt until
@@ -158,11 +162,61 @@ namespace AssessmentBL.Services
             question.Difficulty = difficulty;
             question.DisplayOrder = request.DisplayOrder;
             question.Points = points;
+            question.EssayKeywords = NormalizeEssayKeywords(request.EssayKeywords, questionType);
             question.IsActive = request.IsActive;
 
             await SaveWithDisplayOrderConflictAsync(question.QuizId, request.DisplayOrder, cancellationToken);
 
             return await GetByQuestionIdAsync(questionId, cancellationToken: cancellationToken);
+        }
+
+        /// <summary>
+        /// Rewrites the DisplayOrder of a quiz's questions from an absolute ordered
+        /// list of ids — idempotent, unlike a pairwise swap, which a retried request
+        /// silently undoes.
+        ///
+        /// Renumbered 1..n inside one transaction, through a negative staging pass
+        /// first: UQ_Questions_QuizId_DisplayOrder would otherwise be violated
+        /// mid-update by any order that is a rotation of the current one.
+        /// </summary>
+        public async Task<IReadOnlyList<AdminQuestionResponseDto>> ReorderAsync(
+            int quizId,
+            IReadOnlyList<int> orderedQuestionIds,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(orderedQuestionIds);
+
+            var quizExists = await _db.Quizzes.AsNoTracking().AnyAsync(q => q.Id == quizId, cancellationToken);
+
+            if (!quizExists)
+                throw new KeyNotFoundException($"الاختبار رقم {quizId} غير موجود");
+
+            var questions = await _db.Questions
+                .Where(q => q.QuizId == quizId)
+                .ToListAsync(cancellationToken);
+
+            DisplayOrdering.EnsureCoversExactly(
+                orderedQuestionIds,
+                questions.Select(q => q.Id),
+                "الأسئلة",
+                $"الاختبار رقم {quizId}");
+
+            var questionsById = questions.ToDictionary(q => q.Id);
+
+            await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+
+            for (var i = 0; i < orderedQuestionIds.Count; i++)
+                questionsById[orderedQuestionIds[i]].DisplayOrder = (short)-(i + 1);
+
+            await _db.SaveChangesAsync(cancellationToken);
+
+            for (var i = 0; i < orderedQuestionIds.Count; i++)
+                questionsById[orderedQuestionIds[i]].DisplayOrder = (short)(i + 1);
+
+            await SaveWithDisplayOrderConflictAsync(quizId, 0, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return await GetByQuizIdAsync(quizId, cancellationToken);
         }
 
         public async Task SetActiveAsync(int questionId, bool isActive, CancellationToken cancellationToken = default)
@@ -232,27 +286,30 @@ namespace AssessmentBL.Services
         }
 
         // Mirrors CK_Questions_Difficulty; an omitted value falls back to the
-        // column default rather than failing.
+        // column default rather than failing. Casing does not matter — "medium"
+        // and "Medium" both arrive as the canonical "Medium".
         private static string NormalizeDifficulty(string? difficulty)
         {
             if (string.IsNullOrWhiteSpace(difficulty))
                 return QuestionDifficulties.Medium;
 
-            if (!QuestionDifficulties.All.Contains(difficulty))
-                throw new ArgumentException($"مستوى الصعوبة '{difficulty}' غير صالح", nameof(difficulty));
-
-            return difficulty;
+            return QuestionDifficulties.Normalize(difficulty)
+                ?? throw new ArgumentException(
+                    $"مستوى الصعوبة '{difficulty}' غير صالح ({CanonicalValues.Describe(QuestionDifficulties.All)})",
+                    nameof(difficulty));
         }
-        // Mirrors CK_Questions_QuestionType.
+
+        // Mirrors CK_Questions_QuestionType. Casing does not matter —
+        // "multiplechoice" arrives as the canonical "MultipleChoice".
         private static string NormalizeQuestionType(string? questionType)
         {
             if (string.IsNullOrWhiteSpace(questionType))
                 return QuestionTypes.MultipleChoice;
 
-            if (!QuestionTypes.All.Contains(questionType))
-                throw new ArgumentException($"نوع السؤال '{questionType}' غير صالح", nameof(questionType));
-
-            return questionType;
+            return QuestionTypes.Normalize(questionType)
+                ?? throw new ArgumentException(
+                    $"نوع السؤال '{questionType}' غير صالح ({CanonicalValues.Describe(QuestionTypes.All)})",
+                    nameof(questionType));
         }
 
         private static string? NormalizeImageUrl(string? imageUrl) =>
@@ -369,6 +426,33 @@ namespace AssessmentBL.Services
                 throw new BusinessRuleException(
                     $"لا يمكن تفعيل السؤال رقم {questionId}: صور الاختيارات رقم {string.Join("، ", undescribedOptionIds)} بدون وصف، أضف وصفًا لكل صورة أولًا");
         }
+
+        // Mirrors the NVARCHAR(1000) EssayKeywords column and
+        // CK_Questions_EssayKeywordsOnlyForEssay. Dropped for any type the backend
+        // grades itself: a fallback grader there would never run, and a stale list
+        // left on a question that used to be an essay would be quietly misleading.
+        private static string? NormalizeEssayKeywords(string? essayKeywords, string questionType)
+        {
+            if (questionType != QuestionTypes.Essay || string.IsNullOrWhiteSpace(essayKeywords))
+                return null;
+
+            var parsed = EssayKeywordGrading.ParseKeywords(essayKeywords);
+
+            if (parsed.Count == 0)
+                return null;
+
+            // Stored back in the canonical form the grader parses, so what the admin
+            // reads next is exactly what will be matched.
+            var normalized = string.Join(", ", parsed);
+
+            if (normalized.Length > MaxEssayKeywordsLength)
+                throw new ArgumentException(
+                    $"كلمات الإجابة المفتاحية لا تتجاوز {MaxEssayKeywordsLength} حرف", nameof(essayKeywords));
+
+            return normalized;
+        }
+
+        private const int MaxEssayKeywordsLength = 1000;
 
         // Mirrors CK_Questions_Points (> 0); 0 means "not supplied", so the
         // column default of 1 applies.

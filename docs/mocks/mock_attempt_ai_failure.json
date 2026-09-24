@@ -14,23 +14,5 @@
   "pendingPoints": 0,
   "language": "ar",
   "languageFallbackApplied": false,
-  "hintsStatus": "Unavailable",
-  "retryQuestions": [
-    {
-      "questionId": 102,
-      "questionText": "ما وحدة قياس المقاومة الكهربية؟",
-      "questionType": "MultipleChoice",
-      "imageUrl": null,
-      "difficulty": "Medium",
-      "displayOrder": 2,
-      "points": 2,
-      "currentHint": null,
-      "options": [
-        { "optionId": 1004, "optionText": "الأوم", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1005, "optionText": "الفولت", "imageUrl": null, "displayOrder": 2 },
-        { "optionId": 1006, "optionText": "الأمبير", "imageUrl": null, "displayOrder": 3 }
-      ]
-    }
-  ],
-  "placement": null
+  "hintsStatus": "Unavailable"
 }

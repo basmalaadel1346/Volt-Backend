@@ -11,9 +11,9 @@ public class QuizConfiguration : IEntityTypeConfiguration<Quiz>
         entity.ToTable("Quizzes", "Assessment", tb =>
         {
             tb.HasCheckConstraint("CK_Quizzes_QuizType",
-                "[QuizType] IN ('LevelAssessment', 'LessonQuiz', 'LessonReview', 'Standalone', 'Placement')");
+                "[QuizType] IN ('LevelAssessment', 'LessonQuiz', 'LessonReview', 'Standalone', 'Placement', 'LevelSkip')");
             tb.HasCheckConstraint("CK_Quizzes_TypeMatchesReference",
-                "(([QuizType]='LevelAssessment' AND [LevelId] IS NOT NULL AND [LessonId] IS NULL) " +
+                "(([QuizType] IN ('LevelAssessment','LevelSkip') AND [LevelId] IS NOT NULL AND [LessonId] IS NULL) " +
                 "OR ([QuizType] IN ('LessonQuiz','LessonReview') AND [LessonId] IS NOT NULL AND [LevelId] IS NULL) " +
                 "OR ([QuizType] IN ('Standalone','Placement') AND [LevelId] IS NULL AND [LessonId] IS NULL))");
         });
@@ -32,12 +32,18 @@ public class QuizConfiguration : IEntityTypeConfiguration<Quiz>
         entity.HasIndex(e => e.LessonId, "UQ_Quizzes_OneActiveLessonQuizPerLesson")
             .IsUnique()
             .HasFilter("([QuizType]=N'LessonQuiz' AND [IsActive]=(1))");
+        entity.HasIndex(e => e.LevelId, "UQ_Quizzes_OneActiveLevelSkipPerLevel")
+            .IsUnique()
+            .HasFilter("([QuizType]=N'LevelSkip' AND [IsActive]=(1))");
 
         entity.Property(e => e.Title).HasMaxLength(300);
         entity.Property(e => e.QuizType)
             .HasMaxLength(30)
             .HasDefaultValue("Standalone");
-        entity.Property(e => e.IsActive).HasDefaultValue(true);
+        // A new quiz is a DRAFT: authoring and publishing are separate steps, so an
+        // admin can prepare the next placement test or lesson quiz while the
+        // current one is still running (db/migrations/003).
+        entity.Property(e => e.IsActive).HasDefaultValue(false);
         entity.Property(e => e.CreatedAt)
             .HasPrecision(3)
             .HasDefaultValueSql("(sysutcdatetime())");

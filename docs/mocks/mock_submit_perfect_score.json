@@ -15,6 +15,25 @@
   "language": "ar",
   "languageFallbackApplied": false,
   "hintsStatus": "NotRequired",
-  "retryQuestions": [],
-  "placement": null
+  "rewards": {
+    "sparksEarned": 15,
+    "sparksBalance": 155,
+    "currentStreakDays": 4,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      {
+        "reason": "QuizCompleted",
+        "sparks": 5,
+        "message": "‏+5 شرارة لإنهاء الاختبار"
+      },
+      {
+        "reason": "PerfectScore",
+        "sparks": 10,
+        "message": "‏+10 شرارة لإجابة مثالية بدون أخطاء"
+      }
+    ]
+  }
 }

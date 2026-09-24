@@ -1,4 +1,4 @@
-<Solution>
+﻿<Solution>
   <Folder Name="/Modules/" />
   <Folder Name="/Modules/Users/">
     <Project Path="UsersBL/UsersBL.csproj" />
@@ -7,6 +7,10 @@
   <Folder Name="/Modules/Content/">
     <Project Path="ContentBL/ContentBL.csproj" />
     <Project Path="ContentDA/ContentDA.csproj" />
+  </Folder>
+  <Folder Name="/Modules/Gamification/">
+    <Project Path="GamificationBL/GamificationBL.csproj" />
+    <Project Path="GamificationDA/GamificationDA.csproj" />
   </Folder>
   <Folder Name="/Shared/">
     <Project Path="Shared/Shared.csproj" />
@@ -17,6 +21,7 @@
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="Tests/Assessment.Tests/Assessment.Tests.csproj" />
+    <Project Path="Tests/Gamification.Tests/Gamification.Tests.csproj" />
   </Folder>
   <Project Path="AIIntegration/AIIntegration.csproj" />
   <Project Path="ElectroWorld/ElectroWorld.csproj" /> 

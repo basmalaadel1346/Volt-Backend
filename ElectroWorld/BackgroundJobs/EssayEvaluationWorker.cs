@@ -1,4 +1,4 @@
-using AssessmentBL;
+﻿using AssessmentBL;
 using AssessmentBL.Interfaces;
 using Microsoft.Extensions.Options;
 
@@ -49,6 +49,11 @@ public sealed class EssayEvaluationWorker : BackgroundService
             var essays = scope.ServiceProvider.GetRequiredService<IEssayEvaluationService>();
 
             var decided = await essays.EvaluateDueAsync(stoppingToken);
+
+            // The deadline runs on every tick, not only when there was something to
+            // evaluate: the answers it settles are precisely the ones the evaluator
+            // can no longer pick up.
+            decided += await essays.CloseOverdueAsync(stoppingToken);
 
             if (decided > 0)
                 _logger.LogInformation("Finished {Count} pending essay answer(s) (Graded or NotGraded).", decided);

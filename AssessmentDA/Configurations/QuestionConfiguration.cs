@@ -20,6 +20,11 @@ public class QuestionConfiguration : IEntityTypeConfiguration<Question>
             // what the image shows.
             tb.HasCheckConstraint("CK_Questions_ImageHasDescription",
                 "[ImageUrl] IS NULL OR ([ImageDescription] IS NOT NULL AND LTRIM(RTRIM([ImageDescription])) <> N'')");
+
+            // Keywords are the essay fallback grader, so they mean nothing on a
+            // question the backend already scores by itself.
+            tb.HasCheckConstraint("CK_Questions_EssayKeywordsOnlyForEssay",
+                "[EssayKeywords] IS NULL OR [QuestionType] = 'Essay'");
         });
 
         entity.HasIndex(e => e.Difficulty, "IX_Questions_Difficulty");
@@ -36,6 +41,7 @@ public class QuestionConfiguration : IEntityTypeConfiguration<Question>
             .HasDefaultValue("MultipleChoice");
         entity.Property(e => e.ImageUrl).HasMaxLength(500);
         entity.Property(e => e.ImageDescription).HasMaxLength(1000);
+        entity.Property(e => e.EssayKeywords).HasMaxLength(1000);
         entity.Property(e => e.IsActive).HasDefaultValue(false);
         entity.Property(e => e.CreatedAt)
             .HasPrecision(3)

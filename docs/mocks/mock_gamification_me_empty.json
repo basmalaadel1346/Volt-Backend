@@ -1,0 +1,17 @@
+{
+  "language": "ar",
+  "sparksBalance": 0,
+  "lifetimeSparks": 0,
+  "currentStreakDays": 0,
+  "longestStreakDays": 0,
+  "activeToday": false,
+  "streakSafeForDays": 0,
+  "streakFreezes": 0,
+  "maxStreakFreezes": 2,
+  "streakFreezesUsed": 0,
+  "daysToNextMilestone": 7,
+  "milestoneSparks": 50,
+  "message": "ابدأ سلسلتك اليوم! أنهِ درسًا أو اختبارًا لتشعل أول شعلة.",
+  "items": [],
+  "activeBoosts": []
+}

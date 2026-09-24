@@ -1,4 +1,4 @@
-using AssessmentBL.DTOs.UserTopicStat;
+﻿using AssessmentBL.DTOs.UserTopicStat;
 using AssessmentBL.Interfaces;
 using AssessmentDA.Context;
 using AssessmentDA.Entities;
@@ -66,12 +66,45 @@ namespace AssessmentBL.Services
                     resolvedLanguage))
                 .ToList();
 
-            var answered = topicProgress.Sum(t => t.QuestionsAnswered);
-            var correct = topicProgress.Sum(t => t.CorrectAnswers);
+            var categories = topicProgress
+                .GroupBy(t => t.CategoryId)
+                .Select(g => new CategoryProgressDto
+                {
+                    CategoryId = g.Key,
+                    Name = g.First().CategoryName,
+                    Xp = g.Sum(t => t.Xp),
+                    TotalTopics = g.Count(),
+                    TopicsStarted = g.Count(t => t.Mastery != TopicMasteryLevels.NotStarted),
+                    TopicsMastered = g.Count(t => t.Mastery == TopicMasteryLevels.Mastered),
+                    Topics = g.ToList()
+                })
+                .ToList();
+
+            // Everything the child earned on questions that belong to no topic,
+            // gathered into one catch-all bucket at the end of the map.
+            //
+            // Those points used to exist ONLY inside TotalXp: the map added up to
+            // less than the total, with nothing on screen to explain the gap, so
+            // the app had to show TotalXp as a number detached from everything
+            // below it. The bucket is not a row in Assessment.Categories — no admin
+            // creates or edits it and no question can be filed under it; it exists
+            // only in this response, so the map always adds up.
+            var uncategorized = await BuildUncategorizedAsync(userId, xp, resolvedLanguage, cancellationToken);
+
+            if (uncategorized is not null)
+                categories.Add(uncategorized);
+
+            // Answers are answers wherever they came from, so the accuracy at the
+            // top of the screen counts the catch-all bucket too.
+            var answered = categories.Sum(c => c.Topics.Sum(t => t.QuestionsAnswered));
+            var correct = categories.Sum(c => c.Topics.Sum(t => t.CorrectAnswers));
+
+            // The TOPIC counters deliberately do not: they measure the curriculum an
+            // admin actually defined, and "General" is not a topic anyone sets out
+            // to master.
             var mastered = topicProgress.Count(t => t.Mastery == TopicMasteryLevels.Mastered);
             var started = topicProgress.Count(t => t.Mastery != TopicMasteryLevels.NotStarted);
 
-            // Not the sum of the topics: a question with no topic earns XP too.
             var totalXp = xp.Sum(x => x.Xp);
 
             return new MyProgressResponseDto
@@ -87,20 +120,130 @@ namespace AssessmentBL.Services
                 HintsUsed = topicProgress.Sum(t => t.HintsUsed),
                 Message = TopicProgress.Headline(
                     totalXp, mastered, topicProgress.Count, started > 0 || totalXp > 0, resolvedLanguage),
-                Categories = topicProgress
-                    .GroupBy(t => t.CategoryId)
-                    .Select(g => new CategoryProgressDto
-                    {
-                        CategoryId = g.Key,
-                        Name = g.First().CategoryName,
-                        Xp = g.Sum(t => t.Xp),
-                        TotalTopics = g.Count(),
-                        TopicsStarted = g.Count(t => t.Mastery != TopicMasteryLevels.NotStarted),
-                        TopicsMastered = g.Count(t => t.Mastery == TopicMasteryLevels.Mastered),
-                        Topics = g.ToList()
-                    })
-                    .ToList()
+                Categories = categories
             };
+        }
+
+        /// <summary>
+        /// The "General" bucket: the XP and the answers of every question that has
+        /// no topic, as one category holding one topic. Null when the child has
+        /// never answered such a question, so the map does not grow an empty card.
+        /// </summary>
+        private async Task<CategoryProgressDto?> BuildUncategorizedAsync(
+            Guid userId,
+            IReadOnlyList<XpRow> xp,
+            string language,
+            CancellationToken cancellationToken)
+        {
+            var xpRows = xp.Where(x => x.TopicId is null).ToList();
+            var counts = await LoadUncategorizedCountsAsync(userId, cancellationToken);
+
+            if (xpRows.Count == 0 && counts.Count == 0)
+                return null;
+
+            var name = UncategorizedProgress.Name(language);
+
+            var difficulties = QuestionDifficulties.All
+                .Select(difficulty => new
+                {
+                    Difficulty = difficulty,
+                    Count = counts.FirstOrDefault(c => c.Difficulty == difficulty),
+                    Xp = xpRows.Where(x => x.Difficulty == difficulty).Sum(x => x.Xp)
+                })
+                .Where(d => d.Count is not null || d.Xp > 0)
+                .Select(d => new DifficultyProgressDto
+                {
+                    Difficulty = d.Difficulty,
+                    Xp = d.Xp,
+                    QuestionsAnswered = d.Count?.Answered ?? 0,
+                    CorrectAnswers = d.Count?.Correct ?? 0,
+                    WrongAnswers = (d.Count?.Answered ?? 0) - (d.Count?.Correct ?? 0),
+                    AccuracyPercentage = TopicProgress.AccuracyPercentage(
+                        d.Count?.Answered ?? 0, d.Count?.Correct ?? 0),
+                    HintsUsed = 0
+                })
+                .ToList();
+
+            var answered = difficulties.Sum(d => d.QuestionsAnswered);
+            var correct = difficulties.Sum(d => d.CorrectAnswers);
+            var bucketXp = difficulties.Sum(d => d.Xp);
+
+            var mastery = TopicProgress.Mastery(
+                answered,
+                correct,
+                practised: bucketXp > 0,
+                _settings.EffectiveTopicMasteryPercentage,
+                _settings.EffectiveTopicMasteryMinQuestions);
+
+            var topic = new TopicProgressDto
+            {
+                TopicId = UncategorizedProgress.CategoryId,
+                Name = name,
+                Description = null,
+                CategoryId = UncategorizedProgress.CategoryId,
+                CategoryName = name,
+                LearningLevel = TopicLearningLevels.Beginner,
+                Mastery = mastery,
+                Stars = TopicProgress.Stars(mastery),
+                Xp = bucketXp,
+                QuestionsAnswered = answered,
+                CorrectAnswers = correct,
+                WrongAnswers = answered - correct,
+                AccuracyPercentage = TopicProgress.AccuracyPercentage(answered, correct),
+                HintsUsed = 0,
+                LastPracticedAt = counts.Max(c => (DateTime?)c.LastPracticedAt),
+                Message = TopicProgress.TopicMessage(mastery, answered, correct, language),
+                Difficulties = difficulties
+            };
+
+            return new CategoryProgressDto
+            {
+                CategoryId = UncategorizedProgress.CategoryId,
+                Name = name,
+                Xp = bucketXp,
+                // Not counted as a topic to master, for the same reason the
+                // response-level topic counters leave it out.
+                TotalTopics = 0,
+                TopicsStarted = 0,
+                TopicsMastered = 0,
+                Topics = [topic]
+            };
+        }
+
+        /// <summary>
+        /// Answered / correct per difficulty for the questions that have no topic.
+        /// Read from the attempt history rather than UserTopicStats, which has no
+        /// row to hold them: its key is (user, TOPIC, difficulty).
+        /// </summary>
+        private async Task<List<UncategorizedCount>> LoadUncategorizedCountsAsync(
+            Guid userId,
+            CancellationToken cancellationToken)
+        {
+            // Only wrong answers are stored, so "correct" is "no mistake row".
+            return await _db.QuizAttemptQuestions
+                .AsNoTracking()
+                .Where(aq => aq.QuizAttempt.UserId == userId
+                          && aq.QuizAttempt.Status == QuizAttemptStatuses.Completed
+                          && aq.QuestionType != QuestionTypes.Essay
+                          && aq.TopicId == null)
+                .GroupBy(aq => aq.Difficulty)
+                .Select(g => new UncategorizedCount
+                {
+                    Difficulty = g.Key,
+                    Answered = g.Count(),
+                    Correct = g.Count(aq => !_db.QuizAttemptMistakes.Any(
+                        m => m.QuizAttemptId == aq.QuizAttemptId && m.QuestionId == aq.QuestionId)),
+                    LastPracticedAt = g.Max(aq => aq.QuizAttempt.CompletedAt) ?? DateTime.MinValue
+                })
+                .ToListAsync(cancellationToken);
+        }
+
+        private sealed class UncategorizedCount
+        {
+            public string Difficulty { get; init; } = null!;
+            public int Answered { get; init; }
+            public int Correct { get; init; }
+            public DateTime LastPracticedAt { get; init; }
         }
 
         public async Task<TopicProgressDto> GetTopicProgressAsync(

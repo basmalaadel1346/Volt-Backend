@@ -1,4 +1,4 @@
-using AssessmentBL;
+﻿using AssessmentBL;
 using AssessmentBL.Services;
 using AssessmentBL.Services.Constants;
 using AssessmentDA.Context;
@@ -135,8 +135,10 @@ public class PlacementRuleTests
     }
 
     [Fact]
-    public void TheResult_ListsOnlyAssessedLevels_AndNamesThePlacedOne()
+    public void TheResult_ListsEveryLevel_AndNamesThePlacedOne()
     {
+        // Level 2 has no placement questions at all, so nothing could be concluded
+        // about it — which is exactly why the learner is placed there.
         var withoutLevel2 = FourPerLevel().Where(q => q.Value != Level2.Id).ToDictionary(q => q.Key, q => q.Value);
         var decision = Decide(withoutLevel2, 101);
 
@@ -144,10 +146,43 @@ public class PlacementRuleTests
 
         Assert.Equal(Level2.Id, dto.LevelId);
         Assert.Equal("Level 2", dto.LevelTitle);
-        Assert.Equal(new[] { Level1.Id, Level3.Id }, dto.Levels.Select(l => l.LevelId).ToArray());
+
+        // EVERY level is listed. Dropping the ones the test could not ask about
+        // handed the app a ladder with missing rungs and no way to tell which.
+        Assert.Equal(
+            new[] { Level1.Id, Level2.Id, Level3.Id },
+            dto.Levels.Select(l => l.LevelId).ToArray());
+
         Assert.Equal(75m, dto.Levels[0].ScorePercentage);
         Assert.Equal(4, dto.Levels[0].TotalPoints);
         Assert.Equal(3, dto.Levels[0].EarnedPoints);
+        Assert.True(dto.Levels[0].Assessed);
+
+        // Assessed tells "nothing to ask" apart from "got it all wrong".
+        var level2 = dto.Levels.Single(l => l.LevelId == Level2.Id);
+        Assert.False(level2.Assessed);
+        Assert.False(level2.Mastered);
+        Assert.Equal(0, level2.QuestionsAsked);
+    }
+
+    [Fact]
+    public void ALevelAnsweredEntirelyWrong_IsStillListed()
+    {
+        // Every question of level 1 wrong. The level used to be reported like any
+        // other, but a client could not tell a 0% level from one the server had
+        // simply left out — now Assessed says it was asked.
+        var decision = Decide(FourPerLevel(), 101, 102, 103, 104);
+
+        var dto = PlacementEngine.ToResultDto(decision, decision.PlacedLevel.Id, 0m, DateTime.UtcNow);
+
+        var level1 = dto.Levels.Single(l => l.LevelId == Level1.Id);
+
+        Assert.True(level1.Assessed);
+        Assert.False(level1.Mastered);
+        Assert.Equal(0m, level1.ScorePercentage);
+        Assert.Equal(4, level1.QuestionsAsked);
+        Assert.Equal(0, level1.CorrectAnswers);
+        Assert.Equal(Level1.Id, dto.LevelId);
     }
 }
 

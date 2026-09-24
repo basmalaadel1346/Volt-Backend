@@ -1,4 +1,5 @@
-using AssessmentBL.DTOs.Placement;
+﻿using AssessmentBL.DTOs.Placement;
+using Shared.Gamification;
 
 namespace AssessmentBL.DTOs.QuizAttempt
 {
@@ -62,20 +63,37 @@ namespace AssessmentBL.DTOs.QuizAttempt
         public bool LanguageFallbackApplied { get; set; }
 
         /// <summary>
-        /// NotRequired | Generated | Partial | Unavailable. Whether the retry
-        /// questions carry AI hints. Hints are optional — the score above is final
-        /// whatever this says. When not Generated, CurrentHint is null on the
-        /// retry questions that have no hint.
+        /// NotRequired | Pending | Generated | Partial | Unavailable. Whether the
+        /// hints for the wrong answers have been written yet. A submission returns
+        /// Pending: the score below is final and committed, and the AI writes the
+        /// hints afterwards. Hints are optional — the score is final whatever this
+        /// ends up saying.
+        ///
+        /// The retry questions themselves are NOT in this response. Fetch them with
+        /// GET /api/quiz-attempts/{attemptId}/retry-questions, once the hints-ready
+        /// push arrives on the learner hub or whenever the child taps "try again".
         /// </summary>
         public string HintsStatus { get; set; } = null!;
 
-        public List<QuizQuestionForAttemptDto> RetryQuestions { get; set; } = new();
-
         /// <summary>
-        /// Only for a placement attempt: the level the learner was placed at.
-        /// Null for every other quiz. A placement attempt has no retry questions
-        /// and no hints — it is not retried.
+        /// Only for a placement attempt: the level the learner was placed at, the
+        /// full per-level breakdown, and how many lessons the placement completed.
+        /// Null for every other quiz. A placement attempt is never retried, so it
+        /// has no retry questions and no hints.
         /// </summary>
         public PlacementResultDto? Placement { get; set; }
+
+        /// <summary>
+        /// Only for a level-skip challenge: whether the level was skipped, and the
+        /// hearts and score behind that verdict. Null for every other quiz.
+        /// </summary>
+        public LevelSkipResultDto? LevelSkip { get; set; }
+
+        /// <summary>
+        /// Sparks earned, the streak after this attempt, and any freeze it spent —
+        /// everything the app needs to animate the reward bar without a second
+        /// call. All zeros when the Gamification module is not configured.
+        /// </summary>
+        public RewardOutcome Rewards { get; set; } = RewardOutcome.None;
     }
 }

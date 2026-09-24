@@ -14,23 +14,21 @@
   "pendingPoints": 0,
   "language": "ar",
   "languageFallbackApplied": false,
-  "hintsStatus": "Generated",
-  "retryQuestions": [
-    {
-      "questionId": 102,
-      "questionText": "ما وحدة قياس المقاومة الكهربية؟",
-      "questionType": "MultipleChoice",
-      "imageUrl": null,
-      "difficulty": "Medium",
-      "displayOrder": 2,
-      "points": 2,
-      "currentHint": "افتكر إن الوحدة اسمها على اسم العالم الألماني اللي اكتشف العلاقة بين الجهد والتيار.",
-      "options": [
-        { "optionId": 1004, "optionText": "الأوم", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1005, "optionText": "الفولت", "imageUrl": null, "displayOrder": 2 },
-        { "optionId": 1006, "optionText": "الأمبير", "imageUrl": null, "displayOrder": 3 }
-      ]
-    }
-  ],
-  "placement": null
+  "hintsStatus": "Pending",
+  "rewards": {
+    "sparksEarned": 5,
+    "sparksBalance": 145,
+    "currentStreakDays": 4,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      {
+        "reason": "QuizCompleted",
+        "sparks": 5,
+        "message": "‏+5 شرارة لإنهاء الاختبار"
+      }
+    ]
+  }
 }

@@ -1,4 +1,4 @@
-using AssessmentBL.Services.Constants;
+﻿using AssessmentBL.Services.Constants;
 
 namespace AssessmentBL.Services
 {
@@ -35,11 +35,20 @@ namespace AssessmentBL.Services
             if (answered <= 0)
                 return practised ? TopicMasteryLevels.Learning : TopicMasteryLevels.NotStarted;
 
-            // Compared exactly rather than on the rounded percentage: 79.5% is not 80%.
-            if (correct * 100 < PracticingFromPercentage * answered)
+            // Judged on the SAME rounded percentage the child is shown.
+            //
+            // It used to compare exactly, so 159 of 200 displayed "80%" next to
+            // "Practicing" while the mastery threshold was 80% — a child reading
+            // their own screen had no way to understand why they had not mastered
+            // it, and no number on the screen explained the gap. Whatever the
+            // rounding costs in strictness, an accuracy the child can read and a
+            // mastery they can predict from it is worth more.
+            var accuracy = AccuracyPercentage(answered, correct);
+
+            if (accuracy < PracticingFromPercentage)
                 return TopicMasteryLevels.Learning;
 
-            return correct * 100 >= masteryPercentage * answered && answered >= minQuestions
+            return accuracy >= masteryPercentage && answered >= minQuestions
                 ? TopicMasteryLevels.Mastered
                 : TopicMasteryLevels.Practicing;
         }

@@ -1,4 +1,4 @@
-using AssessmentBL;
+﻿using AssessmentBL;
 using AssessmentBL.Services;
 using AssessmentBL.Services.Constants;
 using Xunit;
@@ -51,11 +51,18 @@ public class TopicProgressTests
         => Assert.Equal(TopicMasteryLevels.Practicing, Mastery(1, 1));
 
     [Fact]
-    public void Mastery_ComparesExactly_NotTheRoundedPercentage()
+    public void Mastery_UsesTheSamePercentageTheChildIsShown()
     {
-        // 159 of 200 is 79.5%, which rounds to 80 but is below it.
+        // 159 of 200 is 79.5%, which the progress screen rounds to 80% — and 80%
+        // is the mastery threshold, so the topic reads as mastered. The two used
+        // to disagree: the screen said 80% and the badge said "Practicing".
         Assert.Equal(80, TopicProgress.AccuracyPercentage(200, 159));
-        Assert.Equal(TopicMasteryLevels.Practicing, Mastery(200, 159));
+        Assert.Equal(TopicMasteryLevels.Mastered, Mastery(200, 159));
+
+        // And just below the rounding boundary it is still Practicing, so the rule
+        // did not simply get looser: 158 of 200 is 79%.
+        Assert.Equal(79, TopicProgress.AccuracyPercentage(200, 158));
+        Assert.Equal(TopicMasteryLevels.Practicing, Mastery(200, 158));
     }
 
     [Theory]

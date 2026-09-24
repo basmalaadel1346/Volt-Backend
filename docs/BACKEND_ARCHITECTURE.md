@@ -1,4 +1,4 @@
-# ElectroWorld backend — business flows
+﻿# ElectroWorld backend — business flows
 
 **Purpose.** This document describes, process by process, what the ElectroWorld backend actually does: who can trigger each flow, what must be true first, the steps the code takes, the rules it enforces, and every outcome a client can observe. It is written from the code (the source of truth). Code is referenced as file path plus class/method, never by line number.
 
@@ -9,7 +9,6 @@
 - [docs/FRONTEND_API.md](FRONTEND_API.md) — exact request/response shapes, headers and status codes per endpoint.
 - [docs/AI_INTEGRATION_CONTRACT.md](AI_INTEGRATION_CONTRACT.md) — the AI contract (version `"2"`): hint, hints and essay-evaluation requests and responses.
 
-When this document and the code disagree, the code wins.
 
 ## Table of contents
 
@@ -35,7 +34,9 @@ When this document and the code disagree, the code wins.
   - [Lesson management (create, update / move, delete)](#lesson-management-create-update--move-delete)
   - [Lesson publication and quiz gating](#lesson-publication-and-quiz-gating)
   - [Lesson content management (create, update, delete)](#lesson-content-management-create-update-delete)
+  - [Lesson unlocking (the previous lesson's quiz)](#lesson-unlocking-the-previous-lessons-quiz)
   - [Reordering by swap (levels, lessons, lesson contents)](#reordering-by-swap-levels-lessons-lesson-contents)
+  - [Reordering by absolute order](#reordering-by-absolute-order)
   - [Media (image) upload and file lifecycle](#media-image-upload-and-file-lifecycle)
 - [5. Assessment module](#5-assessment-module)
   - [Quiz authoring (create, update, activate)](#quiz-authoring-create-update-activate)
@@ -44,6 +45,7 @@ When this document and the code disagree, the code wins.
   - [Option authoring (choices, correct answer, images)](#option-authoring-choices-correct-answer-images)
   - [Lesson quiz preview](#lesson-quiz-preview)
   - [First-run placement test](#first-run-placement-test)
+  - [Level-skip challenge](#level-skip-challenge)
   - [Quiz attempt start and resume (question snapshot)](#quiz-attempt-start-and-resume-question-snapshot)
   - [Quiz attempt submission (validation, grading with points, storage, statistics, concurrency)](#quiz-attempt-submission-validation-grading-with-points-storage-statistics-concurrency)
   - [Result recovery](#result-recovery)
@@ -53,7 +55,11 @@ When this document and the code disagree, the code wins.
   - [Post-submit hints for retry questions](#post-submit-hints-for-retry-questions)
   - [AI essay grading lifecycle](#ai-essay-grading-lifecycle)
   - [User topic statistics](#user-topic-statistics)
-- [6. Cross-cutting rules](#6-cross-cutting-rules)
+- [6. Gamification module](#6-gamification-module)
+  - [Sparks and how they are earned](#sparks-and-how-they-are-earned)
+  - [Streaks and streak freezes](#streaks-and-streak-freezes)
+  - [The shop](#the-shop)
+- [7. Cross-cutting rules](#7-cross-cutting-rules)
   - [Request pipeline and authentication](#request-pipeline-and-authentication)
   - [Response shapes](#response-shapes)
   - [Error model](#error-model)
@@ -61,8 +67,11 @@ When this document and the code disagree, the code wins.
   - [What a child never sees](#what-a-child-never-sees)
   - [Localization](#localization)
   - [Concurrency and idempotency](#concurrency-and-idempotency)
-- [7. Configuration reference](#7-configuration-reference)
+  - [Background work and real-time updates](#background-work-and-real-time-updates)
+  - [Response caching](#response-caching)
+- [8. Configuration reference](#8-configuration-reference)
   - [Assessment:*](#assessment)
+  - [Gamification:*](#gamification)
   - [Ai:*](#ai)
 
 ---
@@ -75,20 +84,26 @@ ElectroWorld is an ASP.NET Core 8 modular monolith. One host process runs every 
 
 | Module | Projects | Responsibility |
 |---|---|---|
-| Host | `ElectroWorld` | Controllers, `ExceptionMiddleware`, JWT authentication, Swagger (`ElectroWorld/Swagger/*`), static files (`wwwroot/uploads`), hosted background services (`AbandonedQuizAttemptSweeper`, `EssayEvaluationWorker`) |
+| Host | `ElectroWorld` | Controllers, `ExceptionMiddleware`, JWT authentication, Swagger (`ElectroWorld/Swagger/*`), static files (`wwwroot/uploads`), output caching, the SignalR hub `/hubs/learner`, hosted background services (`AbandonedQuizAttemptSweeper`, `EssayEvaluationWorker`, `AttemptFollowUpWorker`) |
 | Users | `UsersBL`, `UsersDA`, `Shared/Users` | Guest accounts, email/Google sign-in, refresh-token rotation, password reset by OTP, profile and age, roles |
 | Content | `ContentBL`, `ContentDA` | Ordered levels, lessons (draft/published) and lesson content blocks; image upload |
 | Assessment | `AssessmentBL`, `AssessmentDA` | Category, topic, quiz, question and option authoring; placement test; attempts with a frozen question snapshot; points scoring; retry; hints; AI essay grading; per-topic statistics and the child's progress map (XP, mastery, stars) |
+| Gamification | `GamificationBL`, `GamificationDA` | Sparks (the currency), streaks and streak freezes, the shop, inventory and timed XP boosts |
 | AI integration | `AIIntegration`, `Shared/Assessment/AI` | HTTP client for the external AI provider and the shared AI contract types |
 | Shared | `Shared` | `ApiResponse` envelope, exceptions (`Shared/Common/Exceptions`), JWT generation, cross-module contracts |
-| Tests | `Tests/Assessment.Tests` | Pin Assessment behaviour and exact JSON shapes |
+| Tests | `Tests/Assessment.Tests`, `Tests/Gamification.Tests` | Pin Assessment and Gamification behaviour and exact JSON shapes |
 
 Modules talk to each other only through contracts in `Shared`, with no cross-module foreign keys:
 
 - `Shared/Content/ILevelCatalog` (implemented by `ContentBL.Services.LevelCatalogService`) — level order, used by quiz authoring and placement.
-- `Shared/Content/ILessonAvailability` (implemented by `ContentBL.Services.LessonAvailabilityService`) — whether a lesson exists and is published.
+- `Shared/Content/ILessonAvailability` (implemented by `ContentBL.Services.LessonAvailabilityService`) — whether a lesson exists and is published, and the published lessons of a level in order.
+- `Shared/Content/ILessonProgressWriter` (same implementation) — the one thing another module may CHANGE in Content: marking lessons a learner has already proven they know as completed. Separate from the read contract on purpose, so a module holding only the read side cannot touch a learner's progress.
+- `Shared/Assessment/ILessonQuizGate` (implemented by `AssessmentBL.Services.LessonQuizGateService`) — the reverse direction: has this learner passed a lesson's quiz? Content owns lesson order, Assessment owns attempts, so lesson unlocking is assembled over this contract rather than by either module reaching into the other.
 - `Shared/Content/IMediaContentReader` (implemented by `ContentBL.Services.LocalMediaContentReader`) — reads an uploaded image's bytes for the AI, only when `Assessment:AiSendImageContent` is on.
 - `Shared/Users/ILearnerProfile` (implemented by `UsersBL.Services.LearnerProfileService`) — the learner's age only, used in AI hint requests.
+- `Shared/Gamification/ILearningRewards` (implemented by `GamificationBL.Services.LearningRewardsService`) — "this child just did something that counts". Assessment and Content report activities without referencing Gamification, and a `NullLearningRewards` fallback in `SharedModule` means they run unchanged when it is not registered.
+- `Shared/Common/BackgroundWork/IAttemptFollowUpQueue` (implemented by `ElectroWorld.BackgroundJobs.AttemptFollowUpQueue`) — where a submitted attempt's optional AI work goes, so the submission can return.
+- `Shared/Common/Realtime/ILearnerNotifier` (implemented by `ElectroWorld.Realtime.SignalRLearnerNotifier`) — pushes to one learner's open app. A `NullLearnerNotifier` fallback keeps the modules runnable outside the API host.
 
 ### Roles
 
@@ -865,6 +880,25 @@ sequenceDiagram
 
 ---
 
+### Lesson unlocking (the previous lesson's quiz)
+
+**Rule.** A `Child` cannot open a lesson until they have **passed the quiz of the lesson before it** in the same level. "Passed" is any completed attempt of that lesson's active quiz scoring at least `Assessment:LessonQuizPassPercentage` (default 60); retries count, because a child who got it right on the second try has learned it.
+
+**Where it lives.** The knowledge is split: Content owns lesson order (`SortOrder` within a level), Assessment owns quiz attempts. Neither references the other's project, so the rule is assembled in `ContentBL.Services.LearningProgressService` over the Shared contract `ILessonQuizGate`.
+
+**Two deliberate escapes:**
+
+- The **first lesson of a level** is always open.
+- A lesson whose predecessor has **no active quiz with active questions** counts as passed. Locking a whole course because an admin has not written a quiz yet would be a worse failure than not gating at all.
+
+**Enforcement and query are separate.** `GET /api/content/lessons/{id}` returns **403** with the gate's own message when a `Child` opens a locked lesson — that is the real protection. `GET /api/content/lessons/{lessonId}/access` and `GET /api/content/levels/{levelId}/access` answer the same question without side effects, so the app can draw padlocks instead of offering a door it knows is shut; the level-wide form costs two queries whatever the lesson count.
+
+Admins and parents are never gated: they review and supervise content they have no progress in.
+
+**Two things bypass the gate legitimately**, and both do it by completing the lessons rather than by ignoring the rule: the [placement test](#first-run-placement-test) credits the lessons of every level it proved, and the [level-skip challenge](#level-skip-challenge) credits one level's lessons. Both write through `ILessonProgressWriter`, idempotently.
+
+---
+
 ### Reordering by swap (levels, lessons, lesson contents)
 
 - **Purpose:** change display order without sending order numbers. Two items exchange positions.
@@ -1384,6 +1418,36 @@ stateDiagram-v2
     InProgress --> Required: attempt expired, status recomputed (or Optional)
     Completed --> [*]
 ```
+
+---
+
+### Level-skip challenge
+
+**Purpose.** A child who already knows a level proves it once instead of sitting through every lesson.
+
+**Where the questions come from.** Like the placement test, the `LevelSkip` quiz owns no questions (`QuizTypes.IsSampled`): it samples the level's **own `LessonQuiz` quizzes**, which are by definition what that level teaches. `AssessmentBL.Services.LevelSkipEngine` selects them.
+
+**The terms** (`AssessmentBL.Services.QuizRules`):
+
+| | Default | Setting |
+|---|---|---|
+| Questions | 10 | `Assessment:LevelSkipQuestionCount` |
+| Time limit | 180 s | `Assessment:LevelSkipTimeLimitSeconds` |
+| Hearts | 3 | `Assessment:LevelSkipHearts` |
+| Pass mark | 80 % | `Assessment:LevelSkipPassPercentage` |
+
+**Two sampling decisions:**
+
+- **Round-robin across the level's lessons**, not lesson by lesson (`LevelSkipEngine.TakeRoundRobin`). Taking ten questions in lesson order would let a child who knows only lesson one pass a challenge that is supposed to certify the whole level.
+- **Rotated by the number of previous runs**, so a retake is a different paper — and rotated rather than randomised, because a random sample would make a resumed attempt inconsistent with the one that was started.
+
+**The clock.** `QuizPlayRules` is the only place a quiz type's time limit and hearts are defined, so the start response, the submit check and this document read the same numbers. `expiresAt` is derived from the attempt's own `StartedAt`, so a resumed run shows the time it has **left**, not a fresh window; submitting past it is a 410, decided by the server, not by the client's countdown.
+
+**Hearts are displayed by the client and decided by the server.** Nothing reports a heart lost mid-run: correctness is known only at submit, and telling the client earlier would mean sending it the answer key.
+
+**The verdict** (`QuizAttemptService.LevelSkipVerdict`) is hearts first — that is what the child was watching — and then the points threshold for a run that survived on hearts. `GET /api/level-skip/{levelId}` applies the identical two conditions when reporting `Passed`, rather than the score alone, so the status and the result can never disagree if the two thresholds are configured apart.
+
+**Passing completes the level's lessons** through `ILessonProgressWriter`, which is what actually opens the next level under the [lesson gate](#lesson-unlocking-the-previous-lessons-quiz). A failed challenge can be retaken immediately.
 
 ---
 
@@ -2014,7 +2078,56 @@ sequenceDiagram
 
 ---
 
-## 6. Cross-cutting rules
+## 6. Gamification module
+
+Projects `GamificationBL` / `GamificationDA`, schema `Gamification`. Reached from the learning modules only through `Shared/Gamification/ILearningRewards`, so Assessment and Content report activities without referencing it — and run unchanged when it is not registered, because `SharedModule` registers a `NullLearningRewards` that `GamificationModule` replaces.
+
+**The loop it implements.** The child studies, earns **Sparks**, builds a **streak**, and spends the Sparks protecting the streak. The streak is the engine: nobody wants to lose a 15-day run they worked for, and that loss aversion is what gets the app opened on a day the child would otherwise skip.
+
+### Sparks and how they are earned
+
+| Activity | Sparks | Setting |
+|---|---|---|
+| Lesson completed | 5 | `Gamification:LessonCompletedSparks` |
+| Quiz attempt submitted | 5 | `Gamification:QuizCompletedSparks` |
+| …with no wrong answers (bonus) | +10 | `Gamification:PerfectScoreBonusSparks` |
+| Placement test finished | 20 | `Gamification:PlacementCompletedSparks` |
+| Level-skip challenge passed | 25 | `Gamification:LevelSkipPassedSparks` |
+| 7-day streak reward box | 50 | `Gamification:StreakMilestoneDays` / `…Sparks` |
+
+**Every award is idempotent**, and enforced as such rather than checked. `Gamification.SparkTransactions` has a filtered unique index on `(UserId, Reason, ReferenceKey)`, with the reference key identifying the thing that was finished (`attempt:42`, `lesson:5`). A replayed submit, a retried request or two instances racing all try to write the same row; exactly one wins and the rest are recognised as duplicates. A replayed activity does not advance the streak either: submitting the same attempt twice is not two days of learning, so the duplicate check runs **before** the wallet is touched.
+
+**A reward can never fail what earned it.** `RecordActivityAsync` catches everything and reports `RewardOutcome.None`; the callers (`QuizAttemptService.AwardSubmissionRewardsAsync`, `LearningProgressService.GrantLessonRewardAsync`) wrap it again. The lesson or quiz result is already committed, and a gamification hiccup must not turn it into an error the child sees.
+
+The outcome rides back in the `rewards` field of the submit and lesson-completion responses, so the reward bar animates without a second call.
+
+### Streaks and streak freezes
+
+The rule is `GamificationBL.Services.StreakRules` — pure arithmetic over dates, kept away from the database because everything easy to get subtly wrong about a streak (where the day boundary falls, what "missed" means, what a gap costs) lives there and nowhere else.
+
+- A streak counts **days**, not sessions. `LearnerWallets.LastActivityOn` is a `DATE`, not a timestamp: storing the instant invited comparisons that made "yesterday" depend on the time of day.
+- Back the next day → the streak grows. Back the same day → nothing changes.
+- **Missed a day with a freeze in hand** → the freeze is spent automatically and the streak survives. Two missed days cost two freezes.
+- **Missed more days than freezes held** → the streak restarts at 1, and the freezes are **not** taken. Spending them on a rescue that did not happen would be the one thing more discouraging than losing the streak.
+- A clock skewed backwards never inflates a streak.
+
+A freeze is never "used" by the child: it sits in the inventory and is spent by the system on their return. Holding is capped (`Gamification:MaxStreakFreezes`, default 2) — enough to survive a bad week, not enough to buy ten and disappear for ten days, which would make the streak stop measuring a habit at all.
+
+### The shop
+
+`Gamification.ShopItems` is seeded by `db/migrations/004_GamificationSchema.sql` and maintained by admins. Three kinds:
+
+- **`StreakFreeze`** — the item the whole currency exists for.
+- **`Avatar`** — cosmetics. Several owned, at most one worn per child; equipping takes the previous one off in the same save.
+- **`Boost`** — a timed XP multiplier. **Buying it starts the clock**: a timed multiplier held unused in an inventory would only invite "why is my double XP gone?". It lives in `LearnerBoosts` rather than the inventory because it is a window in time, not a possession.
+
+A purchase is one transaction: debit the wallet, write the ledger row, add the item. `CK_LearnerWallets_SparksBalance` (`>= 0`) means a balance can reach zero but never go below it whatever a bug in the purchase path does, and a concurrent purchase that loses on `RowVersion` is a 409 with nothing charged.
+
+Purchases carry **no** reference key: buying two freezes is two purchases, not a replay of one.
+
+---
+
+## 7. Cross-cutting rules
 
 ### Request pipeline and authentication
 
@@ -2097,15 +2210,57 @@ Further rules (`ExceptionMiddleware.InvokeAsync`):
 | Two admins creating a category or topic with the same name, or two category creates picking the same id | `UQ_Categories_Name`, `UQ_Topics_Name`, `PK_Categories` (`CategoryService`, `TopicService`) | 409 on the pre-check or when lost as a race |
 | Two app instances grading the same essay | Atomic claim UPDATE; conditional save while the claim is held (`EssayEvaluationService`) | — |
 | Sweeper on several instances | Idempotent batched `UPDATE … WHERE Status = 'InProgress'` | — |
-| Two admins activating a quiz for the same slot | `UQ_Quizzes_OneActivePlacement`, `UQ_Quizzes_OneActiveLessonQuizPerLesson` | 409 |
+| Two admins publishing a quiz into the same slot | `UQ_Quizzes_OneActivePlacement`, `UQ_Quizzes_OneActiveLessonQuizPerLesson`, `UQ_Quizzes_OneActiveLevelSkipPerLevel`. Publishing normally **swaps** (the incumbent is retired in the same transaction), so this only bites when two admins publish at the same instant | 409, retry succeeds |
+| A learner pressing "Start" twice on the same quiz | `UQ_QuizAttempts_OneInProgressPerUserQuiz` (filtered on `InProgress`); the loser resumes the winner's attempt | 201 with `resumed: true` |
+| Two rewards for the same finished lesson or attempt | `UQ_SparkTransactions_UserId_Reason_ReferenceKey` (filtered on a non-null key) | Silently recognised as a duplicate; nothing granted twice |
+| Two purchases spending the same Sparks | `LearnerWallets.RowVersion` | 409, nothing charged |
+| Moving a question's correct answer | One transaction clears the old and sets the new, so `UQ_QuestionOptions_OneCorrectPerQuestion` never sees two | 409 only when lost as a race |
 | Two admins taking a question DisplayOrder or a second correct option | `UQ_Questions_QuizId_DisplayOrder`, option unique indexes | 400 on pre-check, 409 when lost as a race |
 | One placement per learner and per attempt | `UQ_UserPlacements_UserId`, `UQ_UserPlacements_QuizAttemptId` | 409 |
 
 ---
 
-## 7. Configuration reference
+### Background work and real-time updates
 
-Sections `Assessment` (`AssessmentBL/AssessmentSettings`) and `Ai` (`AIIntegration/AiSettings`) are optional; every key has a code default. Services read effective (clamped) values through `IOptions<T>` and the background timers are created once, so changes need an application restart. `ElectroWorld/appsettings.json` sets most `Assessment` keys to their code defaults; `AiMaxImageBytesPerRequest`, `HintSimilarityThreshold`, `MaxHintLevels`, `TopicMasteryPercentage`, `TopicMasteryMinQuestions` and `Ai:ApiKey` are not in it, so the class defaults apply. Environment files (`appsettings.Development.json`, `appsettings.Production.json`) may override these values.
+**What moved off the request thread.** A submission used to run its optional AI work inline, inside a 15-second budget: hints for the wrong answers, then essay grading with whatever time was left. The child therefore waited on an AI call for a score that had already been committed **before the AI was asked at all**. Nothing in that phase can change the score or fail the request, which is precisely why it does not belong there.
+
+**Now:** `QuizAttemptService.SubmitAsync` commits, grants the rewards, hands an `AttemptFollowUp` to `IAttemptFollowUpQueue` and returns. `AttemptFollowUpWorker` picks it up on its own scope and calls `RunFollowUpAsync`, which generates and saves the hints, then evaluates the essays, each under its own budget so one unresponsive call cannot stall every attempt behind it.
+
+**The queue is bounded** (`AttemptFollowUpQueue`, capacity 1024, `DropOldest`). An unbounded queue would answer a burst by growing until the process died. Dropping follow-up work is survivable **by design**: the essays stay `Pending` for `EssayEvaluationWorker` to find, and a missing hint is reported honestly as `hintsStatus: "Unavailable"`. Nothing a submission committed is ever at risk. Enqueuing never blocks and never throws, because the caller is a request thread holding a committed result.
+
+**The hub.** `/hubs/learner` (SignalR, authenticated) exists so the app does not have to poll. It is **one-way** — it sends, never receives — and every message names the REST endpoint that returns the same information:
+
+| Message | Payload | Endpoint it names |
+|---|---|---|
+| `hintsReady` | `attemptId`, `hintsStatus` | `GET /api/quiz-attempts/{id}/retry-questions` |
+| `essaysGraded` | `attemptId`, `gradedCount`, `pendingCount` | `GET /api/quiz-attempts/{id}/result` |
+| `rewardsChanged` | balance, streak, freezes | `GET /api/gamification/me` |
+
+Connections join a group named after the caller's own user id, taken from the token: a client cannot ask to listen to somebody else. Because a browser WebSocket handshake cannot send an `Authorization` header, the JWT handler also accepts `?access_token=` — **for the `/hubs` path only**, since a token in a URL elsewhere would end up in logs and proxy history.
+
+Delivery is best-effort and `ILearnerNotifier` implementations never throw: a failed push costs a notification, never the work it was announcing. A client that ignores the hub entirely still works.
+
+### Response caching
+
+ASP.NET Core output caching, applied **per endpoint** and never globally (`ElectroWorld/Api/ResponseCachingPolicies.cs`):
+
+| Policy | Duration | Varies by | Applied to |
+|---|---|---|---|
+| `PublicContent` | 60 s | `Accept-Language`; query `language`, `levelId`, `lessonId`, `isActive`, `pageNumber`, `pageSize`, `quizType` | Levels list and detail, `GET /api/quizzes/for-lesson/{id}`, `GET /api/quizzes/for-level/{id}` |
+| `PerLearner` | 15 s | `Authorization`, `Accept-Language`, query `language` | `GET /api/gamification/me`, `GET /api/gamification/shop` |
+
+Two rules make this safe:
+
+- **`UseOutputCache()` runs after `UseAuthentication()`**, so a cached body can never be served to a request that was not entitled to it.
+- **Only responses that are the same for everyone are cached publicly.** Anything that depends on who is asking — attempts, results, the progress map, placement — is not cached at all. A cache keyed on the URL alone would serve one child another child's answers, which is why these policies are opt-in per endpoint rather than a default with exceptions.
+
+The cost is that an admin's catalogue edit can take up to a minute to appear. That is the deliberate trade for reads that are identical for everyone and get hit by a whole class opening the app at once.
+
+---
+
+## 8. Configuration reference
+
+Sections `Assessment` (`AssessmentBL/AssessmentSettings`), `Gamification` (`GamificationBL/GamificationSettings`) and `Ai` (`AIIntegration/AiSettings`) are optional; every key has a code default. Services read effective (clamped) values through `IOptions<T>` and the background timers are created once, so changes need an application restart. `ElectroWorld/appsettings.json` sets most `Assessment` keys to their code defaults; `AiMaxImageBytesPerRequest`, `HintSimilarityThreshold`, `MaxHintLevels`, `TopicMasteryPercentage`, `TopicMasteryMinQuestions` and `Ai:ApiKey` are not in it, so the class defaults apply. Environment files (`appsettings.Development.json`, `appsettings.Production.json`) may override these values.
 
 ### `Assessment:*`
 
@@ -2113,7 +2268,7 @@ Sections `Assessment` (`AssessmentBL/AssessmentSettings`) and `Ai` (`AIIntegrati
 |---|---|---|---|
 | `InProgressAttemptTimeoutMinutes` | 180 | ≥ 30 | Age after which an InProgress attempt counts as Abandoned (sweeper, submit 410, result 410, hint 410, placement resume) |
 | `AbandonedAttemptSweepIntervalMinutes` | 15 | ≥ 1 | Period of `AbandonedQuizAttemptSweeper` |
-| `AiHintTimeoutSeconds` | 15 | 1…60 | One budget for all optional AI work of a submission (post-submit hints, then inline essays); per-press budget of the Hint button; feeds `EssayClaimLifetime` |
+| `AiHintTimeoutSeconds` | 15 | 1…60 | Budget for the background hint job of one attempt; per-press budget of the Hint button; also how long after a submit `hintsStatus` may still read `Pending`; feeds `EssayClaimLifetime` |
 | `AiSendImageContent` | false | — | Also send image bytes (base64) next to descriptions; for vision-capable models only |
 | `AiMaxImageBytes` | 1,000,000 | 10,000…5,000,000 | Largest single image sent as bytes; larger ones go as description only |
 | `AiMaxImageBytesPerRequest` | 4,000,000 | 10,000…20,000,000 | Total image bytes per AI request; once spent, remaining images go as description only |
@@ -2125,15 +2280,37 @@ Sections `Assessment` (`AssessmentBL/AssessmentSettings`) and `Ai` (`AIIntegrati
 | `EssayEvaluationMaxAttempts` | 5 | 1…20 | AI attempts per essay before it closes `NotGraded` / `Failed` |
 | `EssayEvaluationRetryMinutes` | 10 | ≥ 1 | Base retry wait; the next try is due `RetryMinutes × attempts` after the last one (10, 20, 30… minutes) |
 | `EssayEvaluationTimeoutSeconds` | 30 | 5…120 | Per-request deadline for one attempt's essays (an AI answering later uses up an attempt); also the background batch deadline for starting new requests |
-| `EssayInlineGraceMinutes` | 5 | ≥ 1 | The background worker ignores essays younger than this, leaving the first try to the submission |
+| `EssayInlineGraceMinutes` | 5 | ≥ 1 | The periodic worker ignores essays younger than this, leaving the first try to the attempt follow-up worker |
+| `EssayGradingDeadlineMinutes` | 60 | 5…1440 | Age past which a still-`Pending` essay is settled whatever the AI is doing: graded from the question's `EssayKeywords` (`Graded` / `Fallback` / `GradedBy = Keywords`) or closed `NotGraded` / `TimedOut`. This is what guarantees an essay reaches a final state |
+| `EssayKeywordFullCreditPercentage` | 80 | 10…100 | Share of a question's keywords the answer must mention to earn all its points in a keyword-graded fallback; below it points are proportional, floored at 1 for any real match |
+| `LessonQuizPassPercentage` | 60 | 1…100 | Score a lesson quiz needs for the lesson to count as learned, which is what unlocks the next lesson |
+| `LevelSkipQuestionCount` | 10 | 3…50 | Questions the level-skip challenge draws from the level's lesson quizzes |
+| `LevelSkipTimeLimitSeconds` | 180 | 30…3600 | The level-skip clock; submitting past it is a 410 |
+| `LevelSkipHearts` | 3 | 1…10 | Wrong answers allowed in a level-skip run before it is lost |
+| `LevelSkipPassPercentage` | 80 | 1…100 | Score a level-skip run that kept a heart still has to reach |
 | `PlacementQuestionsPerLevel` | 4 | 1…20 | Questions sampled per level from its newest active LevelAssessment quiz |
 | `PlacementPassPercentage` | 75 | 1…100 | Per-level mastery threshold (earned ÷ total frozen points, inclusive); stored with the placement |
 | `EssayAnswerMaxLength` | 4000 | 100…20000 | Longest essay answer accepted at submit (trimmed length) |
-| `TopicMasteryPercentage` | 80 | 50…100 | Share of correct MultipleChoice/TrueFalse answers, in percent, a topic needs to show as `Mastered` on the progress map (compared exactly: `correct × 100 ≥ value × answered`) |
+| `TopicMasteryPercentage` | 80 | 50…100 | Share of correct MultipleChoice/TrueFalse answers, in percent, a topic needs to show as `Mastered` on the progress map. **Compared on the same ROUNDED percentage the child is shown** — it used to compare exactly, so 159 of 200 displayed "80%" next to "Practicing" with nothing on screen explaining the gap |
 | `TopicMasteryMinQuestions` | 5 | 1…50 | Answers a topic needs before it can show as `Mastered`, so a single lucky answer is not mastery |
 | *(derived)* `EssayClaimLifetime` | 2 min | — | `max(AiHintTimeout, 2 × EssayEvaluationTimeout) + 1 min`; an older claim is treated as a dead run and a maxed-out Pending essay may be closed |
 
 The clamps keep a misconfiguration from abandoning live attempts, spinning a worker, or removing the AI time bound (pinned by `AssessmentSettingsTests.AMisconfiguredValue_…` in `SubmitLifecycleTests.cs` and `PlacementSettingsTests.MisconfiguredValues_AreClamped` in `PlacementTests.cs`).
+
+### `Gamification:*`
+
+Section `Gamification` (`GamificationBL/GamificationSettings`) is optional; every key has a code default and a clamp, so a misconfiguration cannot break the economy.
+
+| Key | Default | Clamp | Effect |
+|---|---|---|---|
+| `LessonCompletedSparks` | 5 | 0…10000 | Sparks for finishing a lesson |
+| `QuizCompletedSparks` | 5 | 0…10000 | Sparks for submitting any quiz attempt |
+| `PerfectScoreBonusSparks` | 10 | 0…10000 | Extra Sparks for an attempt with no wrong answers (only when it had auto-graded questions) |
+| `PlacementCompletedSparks` | 20 | 0…10000 | Sparks for finishing the placement test |
+| `LevelSkipPassedSparks` | 25 | 0…10000 | Sparks for passing a level-skip challenge |
+| `StreakMilestoneDays` | 7 | 2…365 | Streak length that earns a reward box, and its period. Never 0: "every 0 days" would divide by zero on the progress screen and fire on every activity |
+| `StreakMilestoneSparks` | 50 | 0…10000 | Sparks in the reward box |
+| `MaxStreakFreezes` | 2 | 0…10 | Freezes a learner may hold at once — enough for a bad week, not enough to buy ten and disappear for ten days |
 
 ### `Ai:*`
 

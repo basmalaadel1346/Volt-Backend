@@ -1,8 +1,8 @@
-using AssessmentBL.Services.Constants;
+﻿using AssessmentBL.Services.Constants;
 
 namespace ElectroWorld.Api.Controllers;
 
-internal static class ContentLanguageRequestExtensions
+public static class ContentLanguageRequestExtensions
 {
     /// <summary>
     /// Resolves the content language for this request: an explicit ?language=

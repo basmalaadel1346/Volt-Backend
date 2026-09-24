@@ -1,4 +1,5 @@
-using AssessmentBL.DTOs.QuizAttempt;
+﻿using AssessmentBL.DTOs.QuizAttempt;
+using Shared.Common.BackgroundWork;
 
 namespace AssessmentBL.Interfaces
 {
@@ -22,9 +23,12 @@ namespace AssessmentBL.Interfaces
             CancellationToken cancellationToken = default);
 
         /// <summary>
-        /// Submits the entire quiz attempt in bulk: grades it, completes it and
-        /// updates the user's topic statistics in one committed transaction, and
-        /// only then tries to attach AI hints. AI failure never fails the submit.
+        /// Submits the entire quiz attempt in bulk: grades it, completes it,
+        /// updates the user's topic statistics in one committed transaction and
+        /// grants the gamification rewards — then RETURNS. The AI work (hints for
+        /// the wrong answers, grading of the essays) is handed to
+        /// IAttemptFollowUpQueue and runs on a background scope, so a child never
+        /// waits on the AI for a score that is already final.
         /// Submitting an attempt that is already Completed returns the saved
         /// result unchanged; an expired or Abandoned attempt is rejected (410).
         /// Another user's attempt is reported as not found (404).
@@ -69,6 +73,25 @@ namespace AssessmentBL.Interfaces
             Guid userId,
             string? language = null,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// The questions of a submitted attempt the child got wrong, each with its
+        /// latest hint, and whether the hints are finished. Same ownership and
+        /// status rules as GetResultAsync.
+        /// </summary>
+        Task<RetryQuestionsDto> GetRetryQuestionsAsync(
+            long attemptId,
+            Guid userId,
+            string? language = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Runs one submitted attempt's optional AI work — hints, then essay
+        /// grading — and pushes the results to the learner's app. Called by
+        /// AttemptFollowUpWorker on a background scope, never from a request.
+        /// Never throws: the result it belongs to is already committed.
+        /// </summary>
+        Task RunFollowUpAsync(AttemptFollowUp work, CancellationToken cancellationToken);
 
         /// <summary>
         /// Marks every attempt that has stayed InProgress past the configured

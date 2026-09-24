@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using AssessmentBL.Interfaces;
 using AssessmentBL.Services.Constants;
 using AssessmentDA.Context;
@@ -137,6 +137,97 @@ namespace AssessmentBL.Services
 
             return await ClaimAndEvaluateAsync(candidateIds, batchDeadline.Token, cancellationToken);
         }
+
+        /// <summary>
+        /// The grading deadline: settle every answer that has been Pending too
+        /// long, so no essay can wait on the AI forever.
+        ///
+        /// A question with keywords is graded from them (Graded / Fallback, by
+        /// Keywords); one without has nothing to grade against and is closed
+        /// honestly as NotGraded / TimedOut. Every write is conditional on the
+        /// answer still being Pending, so a grade the AI lands at the same instant
+        /// is never overwritten.
+        /// </summary>
+        public async Task<int> CloseOverdueAsync(CancellationToken cancellationToken)
+        {
+            var overdueBefore = _clock.UtcNow - _settings.EssayGradingDeadline;
+
+            var overdue = await _db.QuizAttemptEssayAnswers
+                .AsNoTracking()
+                .Where(e => e.Status == EssayAnswerStatuses.Pending
+                         && e.AiOutcome == null
+                         && e.CreatedAt <= overdueBefore)
+                .OrderBy(e => e.Id)
+                .Take(BatchSize)
+                .Select(e => new
+                {
+                    e.Id,
+                    e.AnswerText,
+                    e.MaxPoints,
+                    e.LanguageCode,
+                    e.Question.EssayKeywords
+                })
+                .ToListAsync(cancellationToken);
+
+            if (overdue.Count == 0)
+                return 0;
+
+            var closed = 0;
+
+            foreach (var answer in overdue)
+            {
+                var grade = EssayKeywordGrading.Grade(
+                    answer.AnswerText,
+                    answer.EssayKeywords,
+                    answer.MaxPoints,
+                    _settings.EffectiveEssayKeywordFullCreditPercentage,
+                    answer.LanguageCode);
+
+                var affected = grade is null
+                    ? await CloseAsNotGradedAsync(answer.Id, EssayAiOutcomes.TimedOut)
+                    : await CloseWithKeywordGradeAsync(answer.Id, grade);
+
+                closed += affected;
+            }
+
+            if (closed > 0)
+                _logger.LogWarning(
+                    "The grading deadline closed {Count} essay answer(s) that had been Pending for more than "
+                  + "{DeadlineMinutes} minutes. Check that the essay AI endpoint is reachable.",
+                    closed, _settings.EssayGradingDeadline.TotalMinutes);
+
+            return closed;
+        }
+
+        /// <summary>
+        /// Writes a keyword grade, but only while the answer is still Pending, so a
+        /// grade the AI landed a moment ago always wins.
+        /// </summary>
+        private Task<int> CloseWithKeywordGradeAsync(long answerId, KeywordGrade grade) =>
+            _db.QuizAttemptEssayAnswers
+                .Where(e => e.Id == answerId
+                         && e.Status == EssayAnswerStatuses.Pending
+                         && e.AiOutcome == null)
+                .ExecuteUpdateAsync(s => s
+                        .SetProperty(e => e.Status, EssayAnswerStatuses.Graded)
+                        .SetProperty(e => e.AiOutcome, EssayAiOutcomes.Fallback)
+                        .SetProperty(e => e.AwardedPoints, (byte?)grade.AwardedPoints)
+                        .SetProperty(e => e.Feedback, grade.Feedback)
+                        .SetProperty(e => e.GradedBy, EssayGraders.Keywords)
+                        .SetProperty(e => e.GradedAt, (DateTime?)_clock.UtcNow)
+                        .SetProperty(e => e.AiClaimId, (Guid?)null),
+                    CancellationToken.None);
+
+        private Task<int> CloseAsNotGradedAsync(long answerId, string outcome) =>
+            _db.QuizAttemptEssayAnswers
+                .Where(e => e.Id == answerId
+                         && e.Status == EssayAnswerStatuses.Pending
+                         && e.AiOutcome == null)
+                .ExecuteUpdateAsync(s => s
+                        .SetProperty(e => e.Status, EssayAnswerStatuses.NotGraded)
+                        .SetProperty(e => e.AiOutcome, outcome)
+                        .SetProperty(e => e.AiClaimId, (Guid?)null),
+                    CancellationToken.None);
 
         /// <param name="startBudget">Once cancelled, no further attempt's request starts.</param>
         /// <param name="runBudget">

@@ -1,4 +1,4 @@
-namespace AssessmentBL.DTOs.Placement
+﻿namespace AssessmentBL.DTOs.Placement
 {
     /// <summary>GET /api/placement — whether the app should show the placement test.</summary>
     public class PlacementStatusDto
@@ -38,7 +38,21 @@ namespace AssessmentBL.DTOs.Placement
 
         public DateTime PlacedAt { get; set; }
 
-        /// <summary>Every level that had placement questions, easiest first.</summary>
+        /// <summary>
+        /// Lessons this placement marked complete: every lesson of every level the
+        /// child was shown to have mastered, which are the levels BELOW
+        /// <see cref="LevelId"/>. A child placed at level 3 has proven levels 1 and
+        /// 2, so their lessons are done, not homework they never did.
+        /// </summary>
+        public int LessonsCompleted { get; set; }
+
+        /// <summary>
+        /// EVERY level, easiest first — not only the ones the test managed to ask
+        /// about. A level the child got entirely wrong, and a level with no
+        /// placement questions at all, are both still here, with Assessed telling
+        /// the two apart, so the app can draw the whole ladder instead of guessing
+        /// which rungs the server left out.
+        /// </summary>
         public List<PlacementLevelResultDto> Levels { get; set; } = new();
     }
 
@@ -63,7 +77,14 @@ namespace AssessmentBL.DTOs.Placement
         /// <summary>EarnedPoints ÷ TotalPoints × 100, 2dp.</summary>
         public decimal ScorePercentage { get; set; }
 
-        /// <summary>ScorePercentage reached PassPercentage.</summary>
+        /// <summary>ScorePercentage reached PassPercentage. False whenever Assessed is false.</summary>
         public bool Mastered { get; set; }
+
+        /// <summary>
+        /// The test actually asked about this level (QuestionsAsked > 0). False
+        /// means the level has no active assessment questions, so nothing could be
+        /// concluded about it — which is why the child was never placed above it.
+        /// </summary>
+        public bool Assessed { get; set; }
     }
 }

@@ -1,4 +1,4 @@
-using AssessmentBL.DTOs.Placement;
+﻿using AssessmentBL.DTOs.Placement;
 using AssessmentBL.Services.Constants;
 using AssessmentDA.Context;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +23,7 @@ namespace AssessmentBL.Services
     {
         private readonly AssessmentDbContext _db;
         private readonly ILevelCatalog _levels;
+        private readonly ILessonAvailability _lessons;
         private readonly IDateTimeProvider _clock;
         private readonly AssessmentSettings _settings;
         private readonly ILogger<PlacementEngine> _logger;
@@ -30,12 +31,14 @@ namespace AssessmentBL.Services
         public PlacementEngine(
             AssessmentDbContext db,
             ILevelCatalog levels,
+            ILessonAvailability lessons,
             IDateTimeProvider clock,
             IOptions<AssessmentSettings> settings,
             ILogger<PlacementEngine> logger)
         {
             _db = db;
             _levels = levels;
+            _lessons = lessons;
             _clock = clock;
             _settings = settings.Value;
             _logger = logger;
@@ -237,11 +240,40 @@ namespace AssessmentBL.Services
 
             var levelOfQuestion = await LoadLevelOfQuestionAsync(pointsOfAskedQuestion.Keys.ToList(), cancellationToken);
 
+            var decision = Decide(levels, levelOfQuestion, pointsOfAskedQuestion, wrongQuestionIds, passPercentage);
+
             return ToResultDto(
-                Decide(levels, levelOfQuestion, pointsOfAskedQuestion, wrongQuestionIds, passPercentage),
+                decision,
                 placedLevelId,
                 scorePercentage,
-                placedAt);
+                placedAt,
+                await CountCreditedLessonsAsync(decision, cancellationToken));
+        }
+
+        /// <summary>
+        /// How many lessons this placement credited: every published lesson of
+        /// every level the learner was shown to have mastered.
+        ///
+        /// Recomputed rather than stored, so a re-read of an old placement reports
+        /// the same number the submission did. Crediting them is idempotent, so
+        /// the count is a description of a fact, not a running total.
+        /// </summary>
+        private async Task<int> CountCreditedLessonsAsync(
+            PlacementDecision decision,
+            CancellationToken cancellationToken)
+        {
+            var masteredLevelIds = decision.Levels
+                .TakeWhile(o => o.Level.Id != decision.PlacedLevel.Id)
+                .Where(o => o.Mastered)
+                .Select(o => o.Level.Id)
+                .ToHashSet();
+
+            if (masteredLevelIds.Count == 0)
+                return 0;
+
+            var lessons = await _lessons.GetPublishedLessonsAsync(cancellationToken);
+
+            return lessons.Count(l => masteredLevelIds.Contains(l.LevelId));
         }
 
         /// <summary>
@@ -309,11 +341,21 @@ namespace AssessmentBL.Services
             return new PlacementDecision(placed, outcomes, passPercentage);
         }
 
+        /// <summary>
+        /// The stored placement as the app renders it.
+        ///
+        /// EVERY level is listed, in learning order. It used to list only the levels
+        /// with QuestionsAsked > 0, which silently dropped any level the test could
+        /// not ask about and left the app with a ladder missing rungs and no way to
+        /// tell which. A level the child got entirely wrong scores 0 and is listed
+        /// like any other; a level with nothing to ask carries Assessed = false.
+        /// </summary>
         public static PlacementResultDto ToResultDto(
             PlacementDecision decision,
             int placedLevelId,
             decimal scorePercentage,
-            DateTime placedAt)
+            DateTime placedAt,
+            int lessonsCompleted = 0)
         {
             var placedLevel = decision.Levels
                 .Select(o => o.Level)
@@ -327,8 +369,8 @@ namespace AssessmentBL.Services
                 ScorePercentage = scorePercentage,
                 PassPercentage = decision.PassPercentage,
                 PlacedAt = placedAt,
+                LessonsCompleted = lessonsCompleted,
                 Levels = decision.Levels
-                    .Where(o => o.QuestionsAsked > 0)
                     .Select(o => new PlacementLevelResultDto
                     {
                         LevelId = o.Level.Id,
@@ -338,7 +380,8 @@ namespace AssessmentBL.Services
                         TotalPoints = o.TotalPoints,
                         EarnedPoints = o.EarnedPoints,
                         ScorePercentage = o.ScorePercentage,
-                        Mastered = o.Mastered
+                        Mastered = o.Mastered,
+                        Assessed = o.QuestionsAsked > 0
                     })
                     .ToList()
             };

@@ -22,6 +22,10 @@ namespace AssessmentBL
             services.AddScoped<IQuestionServiceForAdmin, QuestionService>();
             services.AddScoped<IQuestionOptionServiceForAdmin, QuestionOptionService>();
             services.AddScoped<PlacementEngine>();
+            services.AddScoped<LevelSkipEngine>();
+            services.AddScoped<QuizRules>();
+            services.AddScoped<ILevelSkipService, LevelSkipService>();
+            services.AddScoped<Shared.Assessment.ILessonQuizGate, LessonQuizGateService>();
             services.AddScoped<AiRequestBuilder>();
             services.AddScoped<IEssayEvaluationService, EssayEvaluationService>();
             services.AddScoped<IHintService, HintService>();

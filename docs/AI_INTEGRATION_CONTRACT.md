@@ -1,4 +1,4 @@
-# Volt Assessment ↔ AI Service — Integration Contract (v2)
+﻿# Volt Assessment ↔ AI Service — Integration Contract (v2)
 
 | | |
 |---|---|
@@ -40,7 +40,7 @@ The Volt backend calls the AI service for three tasks:
 |---|---|---|---|
 | **`Hints`** | One hint for each **wrong** MultipleChoice / TrueFalse answer of a submission. The hints are shown with the retry questions. | Right after a non-placement submission is committed. | `Ai:HintsEndpoint` |
 | **`Hint`** | One hint for **one** question while the child is still answering (the Hint button). It escalates: press 1 is a soft nudge, press 2 is more direct. | Each time the child presses the button during a live attempt. | `Ai:HintsEndpoint` (same URL; `task` tells them apart) |
-| **`EssayEvaluation`** | Grade essay answers: points `0…maxPoints` plus feedback for the child. | Inline right after the submission, then again from a background worker until each essay is final. | `Ai:EssayEvaluationEndpoint` |
+| **`EssayEvaluation`** | Grade essay answers: points `0…maxPoints` plus feedback for the child. | On a background worker right after the submission, then again periodically until each essay is final (or the grading deadline settles it). | `Ai:EssayEvaluationEndpoint` |
 
 ```mermaid
 sequenceDiagram
@@ -133,15 +133,21 @@ Every response **should** carry `contractVersion: "2"` and echo `requestId`. The
 
 When a deadline passes, the backend cancels the HTTP call and moves on. A response that arrives late is discarded.
 
+> ⚠️ **Changed in this release: the submission no longer waits for you.**
+>
+> `Hints` and the first `EssayEvaluation` of a submitted attempt used to run **on the request thread**, inside one shared 15-second budget, while a child watched a loading spinner — for a score that had already been committed before your service was called at all. Both now run on a background worker (`AttemptFollowUpWorker`) and their results are pushed to the app over SignalR.
+>
+> **What changes for you:** nothing about the payloads, and nothing about the deadlines below. What changes is the consequence of being slow: it no longer delays a child's score, it only delays the hint or the grade appearing. Please still answer promptly — a hint that arrives after the child has moved on is wasted.
+
 | Call | Deadline | Config key | Default | Allowed range |
 |---|---|---|---|---|
-| `Hints` (after submit) | The **submission AI budget**. It starts right after the commit and also covers the backend's own preparation (database reads, image reads). | `Assessment:AiHintTimeoutSeconds` | 15 s | 1–60 s |
-| `EssayEvaluation`, inline (after submit) | Whatever is **left** of that same budget after `Hints`, and never more than one essay-request deadline. If hints used it all, no inline call is made. | same, plus `Assessment:EssayEvaluationTimeoutSeconds` | ≤ 15 s | — |
+| `Hints` (after submit) | Its own budget on the background worker, covering the backend's preparation (database reads, image reads) as well. | `Assessment:AiHintTimeoutSeconds` | 15 s | 1–60 s |
+| `EssayEvaluation`, right after a submit | Its own budget on the same worker, after the hints have finished. No longer shares a budget with `Hints`. | `Assessment:EssayEvaluationTimeoutSeconds` | 30 s | 5–120 s |
 | `Hint` (Hint button) | One budget per press. It starts after the attempt, level and question checks and covers the age lookup, the previous-hints read, image reads and the call (`HintService.TryGenerateAsync`). | `Assessment:AiHintTimeoutSeconds` | 15 s | 1–60 s |
 | `EssayEvaluation`, background | Per request (one attempt's essays), preparation included. A worker run also stops **starting** new requests once this much time has passed since it began, but a request already started keeps its full deadline. | `Assessment:EssayEvaluationTimeoutSeconds` | 30 s | 5–120 s |
 | `HttpClient.Timeout` | Not configured (.NET default 100 s). It is only reached if `EssayEvaluationTimeoutSeconds` is set above 100; that timeout is then handled like any other failed call (the attempt is counted). | — | 100 s | — |
 
-**Practical targets for you:** answer `Hints` well under 15 s. Whatever time it takes comes out of the child's inline essay grading. Answer `Hint` in a few seconds, because a child is waiting with the question on screen. Answer `EssayEvaluation` under 30 s. A background request holds at most 20 essays; an inline request holds **every** essay of the submitted attempt, with no fixed cap, and must fit in what is left of the 15 s budget (section 4.3.2).
+**Practical targets for you:** answer `Hints` well under 15 s. Answer `Hint` in **a few seconds** — that one is still synchronous, with a child waiting and the question on screen. Answer `EssayEvaluation` under 30 s. A periodic background request holds at most 20 essays; the request made right after a submit holds **every** essay of that attempt, with no fixed cap.
 
 ### 2.5 HTTP status semantics
 
@@ -1042,11 +1048,11 @@ Grade each essay answer on its own merits against its question: award whole-numb
 
 Every submitted essay starts as `Pending` (`AiOutcome` null, 0 attempts). The backend first **claims** essays (one atomic UPDATE: sets `AiClaimId`, `AiLastAttemptAt = now`, and adds 1 to `AiEvaluationAttempts`). It then sends **one request per quiz attempt**, so one request only ever holds one child's answers, in the language they answered in.
 
-1. **Inline** (`QuizAttemptService.TryEvaluateEssaysAsync` → `EssayEvaluationService.EvaluateAttemptAsync`). This runs right after the hints for the same submission (placement submissions included, which have no hints), using what is left of the 15 s budget. All of the attempt's `Pending` essays go in one request, with no fixed cap on their number. No call is made if the budget is already spent or the endpoint is not configured.
+1. **Right after the submission**, on the background worker (`AttemptFollowUpWorker` → `QuizAttemptService.RunFollowUpAsync` → `EssayEvaluationService.EvaluateAttemptAsync`), once the hints for the same submission have finished. It has its own `EssayEvaluationTimeoutSeconds` budget — it no longer competes with the hints for one shared 15 s. All of the attempt's `Pending` essays go in one request, with no fixed cap on their number. No call is made if the endpoint is not configured.
 2. **Background** (`EssayEvaluationWorker` → `EssayEvaluationService.EvaluateDueAsync`). This runs once at startup and then every `EssayEvaluationIntervalMinutes` (default 2). Each run takes up to **20** due essays, lowest id first, and groups them by attempt; the attempts are sent one after another. An essay is due when **all** of these hold:
    - it is `Pending`;
    - it has used fewer than `EssayEvaluationMaxAttempts` (default 5);
-   - it was created at least `EssayInlineGraceMinutes` ago (default 5), so the submission gets the first try;
+   - it was created at least `EssayInlineGraceMinutes` ago (default 5), so the submission's own follow-up gets the first try;
    - `AiLastAttemptAt + EssayEvaluationRetryMinutes × attempts ≤ now` (default wait **10, 20, 30, 40 min** after attempts 1, 2, 3, 4).
 
 **No call is made for an essay whose question no longer exists or has neither text nor an image description.** It is closed at once as `NotGraded`/`Failed`. **If `Ai:EssayEvaluationEndpoint` is empty, nothing is claimed or counted**; essays wait until the endpoint is configured.
@@ -1375,21 +1381,35 @@ Fields that no longer exist in v2 and must not be sent: `proposedPoints`, `flags
 | `Skipped` | yes | `NotGraded` / `Declined`, final |
 | Unusable result, or the call failed / timed out, attempts < max | yes | Stays `Pending`; next try after `EssayEvaluationRetryMinutes × attempts` |
 | Unusable result, or the call failed / timed out, attempts ≥ max | yes | `NotGraded` / `Failed`, final |
-| The **submission's** budget ran out (inline), or the host is shutting down, before your answer arrived | **no** (handed back: the attempt count goes back down by 1) | Retried later. `AiLastAttemptAt` is kept, so the wait is `EssayEvaluationRetryMinutes × the lowered count`; an essay handed back on its first try is due as soon as the grace period has passed |
+| The follow-up budget ran out, or the host is shutting down, before your answer arrived | **no** (handed back: the attempt count goes back down by 1) | Retried later. `AiLastAttemptAt` is kept, so the wait is `EssayEvaluationRetryMinutes × the lowered count`; an essay handed back on its first try is due as soon as the grace period has passed |
 | Backend database error while preparing or saving | **no** (handed back) | Retried later |
 | An essay stuck `Pending` with all attempts used and a claim older than the claim lifetime | — | Closed `NotGraded` / `Failed`. Claim lifetime = `max(AiHintTimeout, 2 × EssayEvaluationTimeout) + 1 min`, **2 min** with defaults. |
+| ⚠️ **An essay still `Pending` past the grading deadline**, whatever the reason — your service unreachable, unconfigured, or failing in a way that never consumed an attempt | — | Settled without you. See below. |
+
+⚠️ **New in this release: a hard grading deadline, and a fallback grader.**
+
+Attempt limits alone were not enough. If this service was unconfigured or unreachable, no attempt was ever counted, so the retry ladder above never ran out — and the essay sat `Pending` for as long as the outage lasted, with the child looking at "being graded" and no final result. Two mechanisms now close it:
+
+- **The deadline.** `Assessment:EssayGradingDeadlineMinutes` (default **60**, clamped 5–1440). Past it, `EssayEvaluationService.CloseOverdueAsync` settles the answer whatever this service is doing.
+- **The keyword fallback.** An essay question may carry admin-authored `EssayKeywords` — the ideas an acceptable answer mentions. At the deadline, the answer is graded from those instead: `Graded`, with `GradedBy = 'Keywords'` and `AiOutcome = 'Fallback'`, points proportional to how many were found, and feedback saying so. A question with no keywords is closed honestly as `NotGraded` / `TimedOut` rather than being given an invented score.
+
+The fallback is deliberately crude and is **only ever reached once this service has definitively not graded the answer**. It does not compete with you: every write is conditional on the answer still being `Pending`, so a grade you land at the same instant always wins.
+
+Your side of the contract is unchanged. The deadline simply means an outage costs the child an approximate grade rather than every point.
 
 Timeline with defaults (`MaxAttempts` 5, retry 10 min, grace 5 min, worker every 2 min), for an essay whose AI calls keep failing:
 
 | Try | Earliest time after submit |
 |---|---|
-| 1 (inline) | ~0 s |
+| 1 (background, right after the submit) | ~0 s |
 | 2 | ≥ 10 min (+ up to one 2-min tick) |
 | 3 | ≥ 20 min after try 2 |
 | 4 | ≥ 30 min after try 3 |
 | 5 | ≥ 40 min after try 4 → if still unusable: `NotGraded` / `Failed` |
 
-If the inline try never started (hints used the whole budget), or was handed back because the budget ran out while waiting for you, the first background try happens once the 5-minute grace has passed, with no retry wait.
+If that first try never started, or was handed back because its budget ran out while waiting for you, the periodic worker picks the essay up once the 5-minute grace has passed, with no retry wait.
+
+Whatever this ladder does, the **grading deadline above closes the answer after 60 minutes**, so the worst case a child can experience is bounded.
 
 A decision is written only while that run still holds its claim and the essay is still `Pending`, so a final state never changes afterwards.
 
@@ -1397,7 +1417,7 @@ What the child sees (`essayResults[]` in the submit and result responses, `Essay
 
 - `questionId`.
 - `status`: `Pending` | `Graded` | `NotGraded`.
-- `awardedPoints` and `feedback`: only for `Graded`.
+- `awardedPoints` and `feedback`: only for `Graded` — whether you graded it or the keyword fallback did. To the child it is simply their grade.
 - `maxPoints`.
 
 A `Pending` essay's `maxPoints` counts in `pendingPoints`; a `Graded` essay's awarded points count in `earnedPoints`; a `NotGraded` essay earns nothing.
@@ -1573,7 +1593,7 @@ The request classes have no field for any of these, so they cannot leak (`AiProv
 - [ ] Accepts request bodies of at least ~6 MB when image bytes may be enabled.
 - [ ] Replies synchronously with `200` and `Content-Type: application/json; charset=utf-8`, uncompressed.
 - [ ] Returns 5xx/503 (never `Skipped`) for model outages, overload and internal errors.
-- [ ] Meets the deadlines: `Hint` in a few seconds, `Hints` well under 15 s, `EssayEvaluation` under 30 s for 20 items (the background maximum), and within the inline budget for a whole attempt's essays.
+- [ ] Meets the deadlines: `Hint` in a few seconds (a child is waiting), `Hints` well under 15 s, `EssayEvaluation` under 30 s for 20 items (the periodic maximum) and for a whole attempt's essays.
 - [ ] Is stateless per request; handles concurrent calls.
 
 **Parsing requests**
@@ -1770,12 +1790,14 @@ jq -e '(.results | length) == 20' essay-ar-20.out.json
 
 | Key | Default | Allowed range | Affects |
 |---|---|---|---|
-| `AiHintTimeoutSeconds` | 15 | 1–60 | Submission AI budget (`Hints` + inline essays); each `Hint` press |
+| `AiHintTimeoutSeconds` | 15 | 1–60 | Budget for the background `Hints` job of one attempt; each `Hint` press |
+| `EssayGradingDeadlineMinutes` | 60 | 5–1440 | Age past which a still-`Pending` essay is settled without you (keyword fallback, else `NotGraded` / `TimedOut`) |
+| `EssayKeywordFullCreditPercentage` | 80 | 10–100 | Share of a question's keywords an answer must mention for full points in a keyword-graded fallback |
 | `EssayEvaluationTimeoutSeconds` | 30 | 5–120 | Per essay request; background run start window |
 | `EssayEvaluationMaxAttempts` | 5 | 1–20 | Tries before `NotGraded`/`Failed` |
 | `EssayEvaluationRetryMinutes` | 10 | ≥ 1 | Wait = value × attempts so far |
 | `EssayEvaluationIntervalMinutes` | 2 | ≥ 1 | Worker tick |
-| `EssayInlineGraceMinutes` | 5 | ≥ 1 | Background leaves younger essays alone |
+| `EssayInlineGraceMinutes` | 5 | ≥ 1 | The periodic worker leaves younger essays alone |
 | `MaxEssayFeedbackLength` | 1000 | 100–4000 | Feedback limit |
 | `EssayAnswerMaxLength` | 4000 | 100–20000 | Child's essay limit (validated at submit) |
 | `MaxHintLength` | 400 | 50–2000 | Hint limit |

@@ -1,5 +1,8 @@
-﻿namespace AssessmentBL.Services.Constants 
+using Shared.Common.Text;
+
+namespace AssessmentBL.Services.Constants
 {
+    /// <summary>Mirrors CK_Questions_Difficulty and CK_UserTopicStats_Difficulty.</summary>
     public static class QuestionDifficulties
     {
         public const string Easy = "Easy";
@@ -15,5 +18,12 @@
             Hard,
             Advanced
         };
+
+        /// <summary>
+        /// The canonical spelling of <paramref name="difficulty"/> whatever its
+        /// casing ("medium" → "Medium"), or null when it is not a difficulty.
+        /// See <see cref="CanonicalValues"/>.
+        /// </summary>
+        public static string? Normalize(string? difficulty) => CanonicalValues.Match(All, difficulty);
     }
 }

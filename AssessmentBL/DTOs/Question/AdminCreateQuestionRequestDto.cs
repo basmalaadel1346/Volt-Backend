@@ -32,5 +32,20 @@
         public short DisplayOrder { get; set; }
 
         public byte Points { get; set; }
+
+        /// <summary>
+        /// Essay questions only: the ideas a good answer mentions, separated by
+        /// commas or new lines (up to 1000 characters).
+        ///
+        /// They are the FALLBACK grader, not the grader. An essay is graded by the
+        /// AI; these are used only when the AI never manages to — it is down, or
+        /// every attempt failed, or the grading deadline passed. Without them such
+        /// an essay closes as NotGraded and earns nothing, which is a worse answer
+        /// to "the AI is down" than a rough but honest keyword score.
+        ///
+        /// Ignored (and stored as null) for any other question type. NEVER returned
+        /// to the child.
+        /// </summary>
+        public string? EssayKeywords { get; set; }
     }
 }

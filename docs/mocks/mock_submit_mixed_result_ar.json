@@ -9,9 +9,7 @@
     {
       "questionId": 104,
       "status": "Pending",
-      "awardedPoints": null,
-      "maxPoints": 3,
-      "feedback": null
+      "maxPoints": 3
     }
   ],
   "correctAnswers": 2,
@@ -22,23 +20,21 @@
   "pendingPoints": 3,
   "language": "ar",
   "languageFallbackApplied": false,
-  "hintsStatus": "Generated",
-  "retryQuestions": [
-    {
-      "questionId": 101,
-      "questionText": "ما هو الجهد الكهربائي؟",
-      "questionType": "MultipleChoice",
-      "imageUrl": null,
-      "difficulty": "Easy",
-      "displayOrder": 1,
-      "points": 1,
-      "currentHint": "فكّر في القوة اللي بتدفع الشحنات الكهربية عشان تتحرك من نقطة لنقطة في الدائرة.",
-      "options": [
-        { "optionId": 1001, "optionText": "فرق الجهد الكهربائي", "imageUrl": null, "displayOrder": 1 },
-        { "optionId": 1002, "optionText": "مقاومة مرور التيار", "imageUrl": null, "displayOrder": 2 },
-        { "optionId": 1003, "optionText": "معدل سريان التيار", "imageUrl": null, "displayOrder": 3 }
-      ]
-    }
-  ],
-  "placement": null
+  "hintsStatus": "Pending",
+  "rewards": {
+    "sparksEarned": 5,
+    "sparksBalance": 145,
+    "currentStreakDays": 4,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      {
+        "reason": "QuizCompleted",
+        "sparks": 5,
+        "message": "‏+5 شرارة لإنهاء الاختبار"
+      }
+    ]
+  }
 }

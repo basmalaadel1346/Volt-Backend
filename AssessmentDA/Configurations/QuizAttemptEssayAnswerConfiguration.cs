@@ -1,4 +1,4 @@
-using AssessmentDA.Entities;
+﻿using AssessmentDA.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -12,19 +12,22 @@ public class QuizAttemptEssayAnswerConfiguration : IEntityTypeConfiguration<Quiz
         {
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_Status",
                 "[Status] IN ('Pending', 'Graded', 'NotGraded')");
-            // The AI is the only grader.
+            // The AI is the normal grader; Keywords is the fallback that closes an
+            // answer the AI never graded (db/migrations/003).
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_GradedBy",
-                "[GradedBy] IS NULL OR [GradedBy] = 'Ai'");
+                "[GradedBy] IS NULL OR [GradedBy] IN ('Ai', 'Keywords')");
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_GradedIsComplete",
                 "([Status] = 'Graded' AND [AwardedPoints] IS NOT NULL AND [GradedAt] IS NOT NULL AND [GradedBy] IS NOT NULL) "
               + "OR ([Status] <> 'Graded' AND [AwardedPoints] IS NULL AND [GradedAt] IS NULL AND [GradedBy] IS NULL)");
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_AiOutcome",
-                "[AiOutcome] IS NULL OR [AiOutcome] IN ('Accepted', 'Declined', 'Failed')");
+                "[AiOutcome] IS NULL OR [AiOutcome] IN ('Accepted', 'Declined', 'Failed', 'Fallback', 'TimedOut')");
             // Pending has no outcome yet; a final status always says how it ended.
+            // Fallback = the keywords graded it, TimedOut = the deadline closed it
+            // with no keywords to fall back on.
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_OutcomeMatchesStatus",
                 "([Status] = 'Pending' AND [AiOutcome] IS NULL) "
-              + "OR ([Status] = 'Graded' AND [AiOutcome] = 'Accepted') "
-              + "OR ([Status] = 'NotGraded' AND [AiOutcome] IN ('Declined', 'Failed'))");
+              + "OR ([Status] = 'Graded' AND [AiOutcome] IN ('Accepted', 'Fallback')) "
+              + "OR ([Status] = 'NotGraded' AND [AiOutcome] IN ('Declined', 'Failed', 'TimedOut'))");
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_AiConfidence",
                 "[AiConfidence] IS NULL OR [AiConfidence] BETWEEN 0 AND 1");
             tb.HasCheckConstraint("CK_QuizAttemptEssayAnswers_AwardedWithinMax",

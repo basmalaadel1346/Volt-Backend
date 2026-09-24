@@ -12,7 +12,7 @@ namespace ElectroWorld.Api.Controllers;
 /// question form reads GET /api/assessment/topics; a question may also have no topic.
 /// </summary>
 [ApiController]
-[Route("api/assessment/topics")]
+[Route("api/Admin/assessment/topics")]
 [Authorize(Roles = "Admin")]
 public class AssessmentTopicController : ControllerBase
 {

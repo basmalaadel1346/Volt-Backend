@@ -1,16 +1,19 @@
 using AssessmentBL.DTOs.Quiz;
 using AssessmentBL.Interfaces;
+using ElectroWorld.Api;
 using ElectroWorld.Swagger;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 using Shared.Common.Api;
 
 namespace ElectroWorld.Api.Controllers;
 
 /// <summary>
-/// Child-facing quiz lookup. Separate from QuizController on purpose: that one is
-/// Admin-only at class level, and an action-level [Authorize] cannot relax a
-/// class-level role requirement — both would apply.
+/// Child-facing quiz lookup: which quiz belongs to a lesson, and which to a
+/// level. Separate from QuizController on purpose: that one is Admin-only at
+/// class level, and an action-level [Authorize] cannot relax a class-level role
+/// requirement — both would apply.
 /// </summary>
 [ApiController]
 [Route("api/quizzes")]
@@ -24,14 +27,20 @@ public class LessonQuizController : ControllerBase
         _quizService = quizService;
     }
 
-    /// <summary>The quiz of the lesson the child is learning, ready to preview.</summary>
+    /// <summary>The quiz of a lesson: its title and how big it is.</summary>
     /// <remarks>
-    /// Returns the active LessonQuiz of a published lesson with its active
-    /// questions and options in display order. Correct answers and image
-    /// descriptions are never included. To answer, start an attempt with
-    /// POST /api/quiz-attempts?quizId={quizId}.
+    /// Enough to draw the "start the quiz" card, and nothing more. The QUESTIONS
+    /// are not here: they come from POST /api/quiz-attempts?quizId={quizId},
+    /// which is the only place they are frozen, and grading is against that frozen
+    /// set. Serving a second, unfrozen copy here invited the app to render one set
+    /// and submit against another, and doubled the payload of a screen that only
+    /// needs a title and a count.
+    ///
+    /// 404 when the lesson is unpublished, missing, or has no active quiz — a
+    /// lesson a child cannot see is reported exactly like one that does not exist.
     /// </remarks>
     [HttpGet("for-lesson/{lessonId:int}")]
+    [OutputCache(PolicyName = ResponseCachingPolicies.PublicContent)]
     [ProducesResponseType(typeof(LessonQuizResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
@@ -39,40 +48,10 @@ public class LessonQuizController : ControllerBase
       ""quizId"": 15,
       ""lessonId"": 5,
       ""title"": ""اختبار الدائرة الكهربية"",
-      ""description"": null,
       ""totalQuestions"": 2,
+      ""totalPoints"": 3,
       ""language"": ""ar"",
-      ""languageFallbackApplied"": false,
-      ""questions"": [
-        {
-          ""questionId"": 101,
-          ""questionText"": ""ما هو الجهد الكهربي؟"",
-          ""questionType"": ""MultipleChoice"",
-          ""imageUrl"": null,
-          ""difficulty"": ""Easy"",
-          ""displayOrder"": 1,
-          ""points"": 1,
-          ""currentHint"": null,
-          ""options"": [
-            { ""optionId"": 1001, ""optionText"": ""فرق الجهد بين نقطتين"", ""imageUrl"": null, ""displayOrder"": 1 },
-            { ""optionId"": 1002, ""optionText"": ""مقاومة مرور التيار"", ""imageUrl"": null, ""displayOrder"": 2 }
-          ]
-        },
-        {
-          ""questionId"": 104,
-          ""questionText"": ""المصباح يضيء بدون مصدر كهربي."",
-          ""questionType"": ""TrueFalse"",
-          ""imageUrl"": null,
-          ""difficulty"": ""Easy"",
-          ""displayOrder"": 2,
-          ""points"": 1,
-          ""currentHint"": null,
-          ""options"": [
-            { ""optionId"": 1010, ""optionText"": ""صح"", ""imageUrl"": null, ""displayOrder"": 1 },
-            { ""optionId"": 1011, ""optionText"": ""خطأ"", ""imageUrl"": null, ""displayOrder"": 2 }
-          ]
-        }
-      ]
+      ""languageFallbackApplied"": false
     }")]
     [SwaggerExample(401, ApiResponseExamples.Unauthorized)]
     [SwaggerExample(404, @"{""success"":false,""message"":""لا يوجد اختبار متاح للدرس رقم 5"",""data"":null}")]
@@ -82,6 +61,42 @@ public class LessonQuizController : ControllerBase
         CancellationToken ct)
     {
         var quiz = await _quizService.GetForLessonAsync(lessonId, Request.ResolveContentLanguage(language), ct);
+        return Ok(quiz);
+    }
+
+    /// <summary>The quiz of a LEVEL, by level id — "the child is on level 3, which quiz do I open?"</summary>
+    /// <remarks>
+    /// Returns the level's active LevelAssessment quiz. The app used to have to
+    /// page through the admin quiz list and guess which one belonged to the level;
+    /// this answers it in one call, with the same shape as the per-lesson lookup.
+    ///
+    /// Start it with POST /api/quiz-attempts?quizId={quizId}. Like the per-lesson
+    /// lookup, the questions are served by that call, not by this one.
+    ///
+    /// 404 when the level does not exist, or has no active quiz with questions.
+    /// </remarks>
+    [HttpGet("for-level/{levelId:int}")]
+    [OutputCache(PolicyName = ResponseCachingPolicies.PublicContent)]
+    [ProducesResponseType(typeof(LevelQuizResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [SwaggerExample(200, @"{
+      ""levelId"": 3,
+      ""quizId"": 21,
+      ""title"": ""تقييم المستوى الثالث"",
+      ""totalQuestions"": 8,
+      ""totalPoints"": 12,
+      ""language"": ""ar"",
+      ""languageFallbackApplied"": false
+    }")]
+    [SwaggerExample(401, ApiResponseExamples.Unauthorized)]
+    [SwaggerExample(404, @"{""success"":false,""message"":""لا يوجد اختبار متاح للمستوى رقم 3"",""data"":null}")]
+    public async Task<ActionResult<LevelQuizResponseDto>> GetForLevel(
+        int levelId,
+        [FromQuery] string? language,
+        CancellationToken ct)
+    {
+        var quiz = await _quizService.GetForLevelAsync(levelId, Request.ResolveContentLanguage(language), ct);
         return Ok(quiz);
     }
 }

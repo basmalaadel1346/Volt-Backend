@@ -1,4 +1,4 @@
-namespace AssessmentBL
+﻿namespace AssessmentBL
 {
     /// <summary>
     /// Assessment module settings, bound from the "Assessment" configuration
@@ -137,6 +137,67 @@ namespace AssessmentBL
         /// 75 means 3 of 4.
         /// </summary>
         public int PlacementPassPercentage { get; set; } = 75;
+
+        /// <summary>
+        /// How long an essay answer may stay Pending before the grading deadline
+        /// closes it, whatever the AI is doing.
+        ///
+        /// Retry limits alone were not enough: an AI that never answers leaves an
+        /// answer claimed-and-retried for hours, and the child is shown "Pending"
+        /// with no end in sight and no final result. At this age the answer is
+        /// settled — by the question's keywords when it has them, and as NotGraded
+        /// when it does not.
+        /// </summary>
+        public int EssayGradingDeadlineMinutes { get; set; } = 60;
+
+        public TimeSpan EssayGradingDeadline =>
+            TimeSpan.FromMinutes(Math.Clamp(EssayGradingDeadlineMinutes, 5, 1440));
+
+        /// <summary>
+        /// Share of an essay question's keywords the child must mention to earn
+        /// ALL its points in a keyword-graded fallback. Below it, points are
+        /// awarded in proportion to the keywords found.
+        /// </summary>
+        public int EssayKeywordFullCreditPercentage { get; set; } = 80;
+
+        public int EffectiveEssayKeywordFullCreditPercentage =>
+            Math.Clamp(EssayKeywordFullCreditPercentage, 10, 100);
+
+        /// <summary>
+        /// Percentage of a lesson quiz a child must score for the lesson to count
+        /// as learned, which is what unlocks the next one. Not the same as topic
+        /// mastery: this is one quiz, judged once, not a running average.
+        /// </summary>
+        public int LessonQuizPassPercentage { get; set; } = 60;
+
+        public decimal EffectiveLessonQuizPassPercentage => Math.Clamp(LessonQuizPassPercentage, 1, 100);
+
+        /// <summary>
+        /// Questions the level-skip challenge draws from the lesson quizzes of the
+        /// level being skipped.
+        /// </summary>
+        public int LevelSkipQuestionCount { get; set; } = 10;
+
+        /// <summary>Seconds the whole level-skip challenge may take. Three minutes by default.</summary>
+        public int LevelSkipTimeLimitSeconds { get; set; } = 180;
+
+        /// <summary>Wrong answers allowed in a level-skip challenge before it is lost.</summary>
+        public int LevelSkipHearts { get; set; } = 3;
+
+        /// <summary>
+        /// Percentage of the level-skip challenge's Points the child must earn to
+        /// skip the level. Hearts usually decide it first; this covers a challenge
+        /// finished with hearts to spare but too few points.
+        /// </summary>
+        public int LevelSkipPassPercentage { get; set; } = 80;
+
+        public int EffectiveLevelSkipQuestionCount => Math.Clamp(LevelSkipQuestionCount, 3, 50);
+
+        public int EffectiveLevelSkipTimeLimitSeconds => Math.Clamp(LevelSkipTimeLimitSeconds, 30, 3600);
+
+        public byte EffectiveLevelSkipHearts => (byte)Math.Clamp(LevelSkipHearts, 1, 10);
+
+        public decimal EffectiveLevelSkipPassPercentage => Math.Clamp(LevelSkipPassPercentage, 1, 100);
 
         /// <summary>Longest essay answer accepted, in characters.</summary>
         public int EssayAnswerMaxLength { get; set; } = 4000;

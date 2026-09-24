@@ -70,6 +70,15 @@ public class QuizAttemptConfiguration : IEntityTypeConfiguration<QuizAttempt>
             .IsUnique()
             .HasFilter("([PreviousAttemptId] IS NOT NULL)");
 
+        // One LIVE attempt per learner per quiz. This is what makes a
+        // double-tapped "Start" harmless: the second insert loses here and the
+        // service serves the first attempt instead of orphaning one InProgress.
+        // Filtered on InProgress, so finished and abandoned attempts never
+        // collide with a new one.
+        entity.HasIndex(e => new { e.UserId, e.QuizId }, "UQ_QuizAttempts_OneInProgressPerUserQuiz")
+            .IsUnique()
+            .HasFilter("([Status]=N'InProgress')");
+
         entity.HasOne(d => d.PreviousAttempt)
             .WithOne(d => d.NextAttempt)
             .HasForeignKey<QuizAttempt>(d => d.PreviousAttemptId)

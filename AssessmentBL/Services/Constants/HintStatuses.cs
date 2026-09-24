@@ -1,4 +1,4 @@
-namespace AssessmentBL.Services.Constants
+﻿namespace AssessmentBL.Services.Constants
 {
     /// <summary>
     /// Tells the client whether the retry questions of a result carry AI hints.
@@ -9,6 +9,15 @@ namespace AssessmentBL.Services.Constants
     {
         /// <summary>No wrong answers, so there is nothing to hint.</summary>
         public const string NotRequired = "NotRequired";
+
+        /// <summary>
+        /// There are wrong answers and the AI has not finished writing their hints
+        /// yet. The only non-final status: the submission hands the work to the
+        /// background and returns, so this is what a result says until the hints
+        /// land. Ask GET /api/quiz-attempts/{id}/retry-questions again, or wait for
+        /// the hints-ready push on the learner hub.
+        /// </summary>
+        public const string Pending = "Pending";
 
         /// <summary>Every retry question carries a hint.</summary>
         public const string Generated = "Generated";
@@ -22,15 +31,23 @@ namespace AssessmentBL.Services.Constants
         /// </summary>
         public const string Unavailable = "Unavailable";
 
-        public static string Resolve(int retryQuestions, int hintedQuestions)
+        /// <param name="hintingSettled">
+        /// False while the background hint job for this attempt has not run yet:
+        /// "no hints saved" then means "not written yet" (Pending), not "the AI
+        /// had nothing to give" (Unavailable).
+        /// </param>
+        public static string Resolve(int retryQuestions, int hintedQuestions, bool hintingSettled = true)
         {
             if (retryQuestions <= 0)
                 return NotRequired;
 
-            if (hintedQuestions <= 0)
-                return Unavailable;
+            if (hintedQuestions >= retryQuestions)
+                return Generated;
 
-            return hintedQuestions < retryQuestions ? Partial : Generated;
+            if (!hintingSettled)
+                return Pending;
+
+            return hintedQuestions <= 0 ? Unavailable : Partial;
         }
     }
 }

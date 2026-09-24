@@ -1,4 +1,4 @@
-namespace AssessmentBL.Interfaces
+﻿namespace AssessmentBL.Interfaces
 {
     public interface IEssayEvaluationService
     {
@@ -15,5 +15,18 @@ namespace AssessmentBL.Interfaces
         /// Returns how many reached a final state (Graded or NotGraded).
         /// </summary>
         Task<int> EvaluateDueAsync(CancellationToken cancellationToken);
+
+        /// <summary>
+        /// The grading deadline. Closes every essay answer still Pending past
+        /// Assessment:EssayGradingDeadlineMinutes, whatever the AI is doing:
+        /// graded from the question's keywords when it has them, NotGraded
+        /// (TimedOut) when it does not.
+        ///
+        /// This is what guarantees an essay reaches a final state. Attempt limits
+        /// alone did not: an AI that never answers, or that keeps failing in a way
+        /// that does not consume an attempt, left the child looking at "Pending"
+        /// with no end in sight. Returns how many answers were closed.
+        /// </summary>
+        Task<int> CloseOverdueAsync(CancellationToken cancellationToken);
     }
 }

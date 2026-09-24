@@ -16,6 +16,7 @@
     <ProjectReference Include="..\AssessmentBL\AssessmentBL.csproj" />
     <ProjectReference Include="..\UsersBL\UsersBL.csproj" />
     <ProjectReference Include="..\ContentBL\ContentBL.csproj" />
+    <ProjectReference Include="..\GamificationBL\GamificationBL.csproj" />
     <ProjectReference Include="..\AIIntegration\AIIntegration.csproj" />
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>

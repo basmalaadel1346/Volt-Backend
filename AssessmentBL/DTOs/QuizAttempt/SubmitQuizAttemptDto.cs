@@ -1,16 +1,16 @@
-﻿using System.Collections.Generic;
-
 namespace AssessmentBL.DTOs.QuizAttempt
 {
     public class SubmitQuizAttemptDto
     {
         /// <summary>
-        /// The answer to EVERY MultipleChoice and TrueFalse question in the attempt
-        /// (the name is historical). The backend grades each against the frozen
-        /// answer key and records only the wrong ones. A missing answer is rejected
-        /// with 400 — it used to be counted as correct, so an empty list scored 100%.
+        /// The answer to EVERY MultipleChoice and TrueFalse question in the attempt.
+        /// The backend grades each against the frozen answer key and records only
+        /// the wrong ones — which is why this list used to be called "mistakes",
+        /// a name that described the backend's storage rather than what the client
+        /// sends. A missing answer is rejected with 400; it used to be counted as
+        /// correct, so an empty list scored 100%.
         /// </summary>
-        public List<QuizAttemptMistakeDto> Mistakes { get; set; } = new();
+        public List<QuizAttemptAnswerDto> Answers { get; set; } = new();
 
         /// <summary>
         /// The answer to EVERY Essay question in the attempt — required like all

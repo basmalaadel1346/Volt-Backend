@@ -1,0 +1,26 @@
+{
+  "attemptId": 71,
+  "quizId": 31,
+  "startedAt": "2026-09-21T10:00:00.0000000Z",
+  "resumed": false,
+  "expiresAt": "2026-09-21T10:03:00.0000000Z",
+  "timeLimitSeconds": 180,
+  "hearts": 3,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "removedQuestionIds": [],
+  "questions": [
+    {
+      "questionId": 101,
+      "questionText": "ما هو الجهد الكهربي؟",
+      "questionType": "MultipleChoice",
+      "difficulty": "Easy",
+      "displayOrder": 1,
+      "points": 1,
+      "options": [
+        { "optionId": 1001, "optionText": "فرق الجهد بين نقطتين", "displayOrder": 1 },
+        { "optionId": 1002, "optionText": "مقاومة مرور التيار", "displayOrder": 2 }
+      ]
+    }
+  ]
+}

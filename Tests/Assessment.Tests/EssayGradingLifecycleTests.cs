@@ -1,4 +1,4 @@
-using AssessmentBL.Services;
+﻿using AssessmentBL.Services;
 using AssessmentBL.Services.Constants;
 using AssessmentDA.Context;
 using AssessmentDA.Entities;
@@ -164,7 +164,7 @@ public class EssayAnswerModelTests
     }
 
     [Fact]
-    public void TheCheckConstraints_AllowOnlyTheAiLifecycle()
+    public void TheCheckConstraints_AllowTheAiLifecycleAndTheKeywordFallback()
     {
         var entity = EssayEntity();
 
@@ -172,16 +172,24 @@ public class EssayAnswerModelTests
         foreach (var value in new[] { EssayAnswerStatuses.Pending, EssayAnswerStatuses.Graded, EssayAnswerStatuses.NotGraded })
             Assert.Contains($"'{value}'", status);
 
-        Assert.Equal("[GradedBy] IS NULL OR [GradedBy] = 'Ai'", CheckSql(entity, "CK_QuizAttemptEssayAnswers_GradedBy"));
+        // The AI is the normal grader; Keywords closes an answer it never graded,
+        // so an AI outage costs the child an approximate grade, not every point.
+        Assert.Equal(
+            "[GradedBy] IS NULL OR [GradedBy] IN ('Ai', 'Keywords')",
+            CheckSql(entity, "CK_QuizAttemptEssayAnswers_GradedBy"));
 
         var outcome = CheckSql(entity, "CK_QuizAttemptEssayAnswers_AiOutcome");
-        foreach (var value in new[] { EssayAiOutcomes.Accepted, EssayAiOutcomes.Declined, EssayAiOutcomes.Failed })
+        foreach (var value in new[]
+                 {
+                     EssayAiOutcomes.Accepted, EssayAiOutcomes.Declined, EssayAiOutcomes.Failed,
+                     EssayAiOutcomes.Fallback, EssayAiOutcomes.TimedOut
+                 })
             Assert.Contains($"'{value}'", outcome);
 
         var matches = CheckSql(entity, "CK_QuizAttemptEssayAnswers_OutcomeMatchesStatus");
         Assert.Contains("[Status] = 'Pending' AND [AiOutcome] IS NULL", matches);
-        Assert.Contains("[Status] = 'Graded' AND [AiOutcome] = 'Accepted'", matches);
-        Assert.Contains("[Status] = 'NotGraded' AND [AiOutcome] IN ('Declined', 'Failed')", matches);
+        Assert.Contains("[Status] = 'Graded' AND [AiOutcome] IN ('Accepted', 'Fallback')", matches);
+        Assert.Contains("[Status] = 'NotGraded' AND [AiOutcome] IN ('Declined', 'Failed', 'TimedOut')", matches);
 
         var everyCheck = string.Join(" ", entity.GetCheckConstraints().Select(c => c.Sql));
         foreach (var gone in new[] { "Human", "NeedsReview", "Skipped" })

@@ -1,0 +1,25 @@
+{
+  "attemptId": 43,
+  "quizId": 15,
+  "startedAt": "2026-09-21T18:45:00.7654321Z",
+  "resumed": false,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "removedQuestionIds": [103],
+  "notice": "السؤال الذي أجبت عليه إجابة خاطئة تم حذفه من الاختبار، لذلك لن تجده في هذه المحاولة.",
+  "questions": [
+    {
+      "questionId": 102,
+      "questionText": "ما وحدة قياس المقاومة الكهربية؟",
+      "questionType": "MultipleChoice",
+      "difficulty": "Medium",
+      "displayOrder": 2,
+      "points": 2,
+      "currentHint": "افتكر إن الوحدة اسمها على اسم العالم الألماني.",
+      "options": [
+        { "optionId": 1004, "optionText": "الأوم", "displayOrder": 1 },
+        { "optionId": 1005, "optionText": "الفولت", "displayOrder": 2 }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,16 @@ public partial class Question
     /// </summary>
     public string? ImageDescription { get; set; }
 
+    /// <summary>
+    /// Essay questions only: comma- or newline-separated keywords an acceptable
+    /// answer mentions. The FALLBACK grader — used only when the AI never grades
+    /// the answer (down, out of attempts, or past the grading deadline), so a
+    /// failing AI costs the child an approximate grade rather than all their
+    /// points. NULL for every other type. NEVER returned in a child-facing
+    /// response.
+    /// </summary>
+    public string? EssayKeywords { get; set; }
+
     public string Difficulty { get; set; } = null!;
 
     public short DisplayOrder { get; set; }

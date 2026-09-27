@@ -55,7 +55,7 @@ Responsible for:
 * Flutter Integration Mocks
 
 
-### Eng. Rawda
+### Eng. Rawda Eweda
 
 Responsible for the **Users Module** and **Content Module**, including their business logic, data access, API integration, authorization, validation, database interaction, learning progress, media handling, Flutter integration support, and backend deployment.
 
@@ -1077,7 +1077,7 @@ The repository focuses on the implemented backend modules, APIs, business rules,
 * Flutter/backend integration support
 * Assessment and Gamification testing
 
-## Eng. Rawda
+## Eng. Rawda Eweda
 
 * Users Module
 * Content Module

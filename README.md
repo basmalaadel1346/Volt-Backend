@@ -54,14 +54,77 @@ Responsible for:
 * Flutter integration support
 * Flutter Integration Mocks
 
+
 ### Eng. Rawda
 
-Responsible for:
+Responsible for the **Users Module** and **Content Module**, including their business logic, data access, API integration, authorization, validation, database interaction, learning progress, media handling, Flutter integration support, and backend deployment.
 
-* Users Module
-* Content Module
+#### Users Module
 
-The modules communicate through defined contracts and shared interfaces rather than directly accessing another module's `DbContext`.
+Responsible for the complete user identity and authentication lifecycle, including:
+
+- Email/password registration and authentication
+- Google authentication
+- Guest authentication
+- Guest account conversion
+- JWT authentication
+- Access-token and refresh-token management
+- Logout and session management
+- Password hashing and secure credential handling
+- Forgot-password and password-reset workflows
+- OTP generation and verification
+- Password change
+- Email verification and verification-code management
+- Birth-date management
+- Current-user profile management
+- Account deletion
+- Server-side user ownership and authorization
+
+The authentication system supports multiple authentication providers while keeping authentication and authorization decisions on the backend.
+
+#### Content Module
+
+Responsible for the educational content management lifecycle, including:
+
+- Levels management
+- Lessons management
+- Lesson publishing and availability
+- Lesson ordering
+- Lesson-content management
+- Content types
+- Media and image handling
+- Content validation
+- Learner-facing content retrieval
+- Administrative content management
+- Learning progress tracking
+
+#### Learning Progress
+
+Responsible for implementing learner progress tracking for the Content Module.
+
+The progress system tracks lesson completion and retrieves learner-specific progress based on the authenticated user.
+
+Progress ownership is resolved server-side to prevent learners from accessing or modifying another learner's progress.
+
+#### Deployment and Server Management
+
+Responsible for deploying and publishing the backend to the server and maintaining the backend environment used by the Flutter application.
+
+Deployment responsibilities include:
+
+- Publishing backend builds
+- Updating the deployed application
+- Managing required server-side configuration
+- Verifying deployed functionality
+- Testing the live environment
+- Troubleshooting deployment issues
+- Supporting Flutter integration with the deployed backend
+
+**Live Swagger — V1:**  
+https://volt.runasp.net/swagger/index.html
+
+**Live Swagger — V2:**  
+https://volt-v2.runasp.net/swagger/index.html
 
 ---
 
@@ -196,7 +259,6 @@ It is owned by **Eng. Rawda**.
 The learning structure includes concepts such as:
 
 ```text
-Courses
 Levels
 Lessons
 Lesson Contents
@@ -214,6 +276,8 @@ ILessonAvailability
 rather than directly querying the Content database context.
 
 ---
+
+
 
 # Assessment Module
 
@@ -1012,10 +1076,21 @@ The repository focuses on the implemented backend modules, APIs, business rules,
 * Flutter Integration Mocks
 * Flutter/backend integration support
 * Assessment and Gamification testing
+
 ## Eng. Rawda
 
 * Users Module
 * Content Module
+* Authentication and Authorization
+* Guest, Email, and Google Authentication
+* Password Reset and Email Verification
+* User Profile and Account Management
+* Learning Progress
+* Educational Content Management
+* Lesson Publishing and Ordering
+* Media and Image Handling
+* Flutter Integration Support
+* Backend Deployment and Server Management
 
 ---
 

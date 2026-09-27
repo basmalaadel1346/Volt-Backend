@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/Modules/" />
+  <Folder Name="/Modules/Users/">
+    <Project Path="UsersBL/UsersBL.csproj" />
+    <Project Path="UsersDA/UsersDA.csproj" />
+  </Folder>
+  <Folder Name="/Modules/Content/">
+    <Project Path="ContentBL/ContentBL.csproj" />
+    <Project Path="ContentDA/ContentDA.csproj" />
+  </Folder>
+  <Folder Name="/Shared/">
+    <Project Path="Shared/Shared.csproj" />
+  </Folder>
+  <Project Path="ElectroWorld/ElectroWorld.csproj" />
+</Solution>

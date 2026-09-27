@@ -1,0 +1,40 @@
+{
+  "attemptId": 44,
+  "quizId": 17,
+  "completedAt": "2026-09-10T18:42:10.1234567Z",
+  "totalQuestions": 1,
+  "autoGradedQuestions": 0,
+  "pendingEssayQuestions": 1,
+  "essayResults": [
+    {
+      "questionId": 120,
+      "status": "Pending",
+      "maxPoints": 3
+    }
+  ],
+  "correctAnswers": 0,
+  "wrongAnswers": 0,
+  "scorePercentage": 0,
+  "totalPoints": 3,
+  "earnedPoints": 0,
+  "pendingPoints": 3,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "hintsStatus": "NotRequired",
+  "rewards": {
+    "sparksEarned": 5,
+    "sparksBalance": 150,
+    "currentStreakDays": 5,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      {
+        "reason": "QuizCompleted",
+        "sparks": 5,
+        "message": "‏+5 شرارة لإنهاء الاختبار"
+      }
+    ]
+  }
+}

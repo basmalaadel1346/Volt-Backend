@@ -1,0 +1,45 @@
+{
+  "status": "Completed",
+  "placementQuizId": null,
+  "attemptId": 58,
+  "result": {
+    "levelId": 2,
+    "levelTitle": "المستوى الثاني: الدوائر الكهربية",
+    "levelOrder": 2,
+    "scorePercentage": 58.33,
+    "passPercentage": 75,
+    "placedAt": "2026-09-11T16:05:42.31",
+    "levels": [
+      {
+        "levelId": 1,
+        "levelTitle": "المستوى الأول: أساسيات الكهرباء",
+        "questionsAsked": 4,
+        "correctAnswers": 4,
+        "totalPoints": 4,
+        "earnedPoints": 4,
+        "scorePercentage": 100,
+        "mastered": true
+      },
+      {
+        "levelId": 2,
+        "levelTitle": "المستوى الثاني: الدوائر الكهربية",
+        "questionsAsked": 4,
+        "correctAnswers": 2,
+        "totalPoints": 4,
+        "earnedPoints": 2,
+        "scorePercentage": 50,
+        "mastered": false
+      },
+      {
+        "levelId": 3,
+        "levelTitle": "المستوى الثالث: القياسات",
+        "questionsAsked": 4,
+        "correctAnswers": 1,
+        "totalPoints": 4,
+        "earnedPoints": 1,
+        "scorePercentage": 25,
+        "mastered": false
+      }
+    ]
+  }
+}

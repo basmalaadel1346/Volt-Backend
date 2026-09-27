@@ -1,0 +1,98 @@
+[
+  {
+    "id": 1,
+    "name": "مفهوم الكهرباء",
+    "description": "ما هي الكهرباء وأين نستخدمها في حياتنا.",
+    "categoryId": 1,
+    "categoryName": "أساسيات الكهرباء",
+    "learningLevel": "Beginner",
+    "isActive": true,
+    "questionsCount": 8,
+    "createdAt": "2026-08-01T10:00:00",
+    "updatedAt": null,
+    "translations": [
+      { "languageCode": "ar", "name": "مفهوم الكهرباء", "description": "ما هي الكهرباء وأين نستخدمها في حياتنا." },
+      { "languageCode": "en", "name": "What is electricity", "description": "What electricity is and where we use it." }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "الدائرة الكهربية",
+    "description": "الدائرة المغلقة والمفتوحة ولماذا يضيء المصباح.",
+    "categoryId": 1,
+    "categoryName": "أساسيات الكهرباء",
+    "learningLevel": "Beginner",
+    "isActive": true,
+    "questionsCount": 10,
+    "createdAt": "2026-08-01T10:00:00",
+    "updatedAt": "2026-09-02T11:20:45.31",
+    "translations": [
+      { "languageCode": "ar", "name": "الدائرة الكهربية", "description": "الدائرة المغلقة والمفتوحة ولماذا يضيء المصباح." },
+      { "languageCode": "en", "name": "The electric circuit", "description": "Closed and open circuits, and why a bulb lights up." }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "السلامة الكهربية",
+    "description": "كيف نتعامل مع الكهرباء بأمان في البيت والمدرسة.",
+    "categoryId": 1,
+    "categoryName": "أساسيات الكهرباء",
+    "learningLevel": "Beginner",
+    "isActive": true,
+    "questionsCount": 6,
+    "createdAt": "2026-08-01T10:00:00",
+    "updatedAt": null,
+    "translations": [
+      { "languageCode": "ar", "name": "السلامة الكهربية", "description": "كيف نتعامل مع الكهرباء بأمان في البيت والمدرسة." },
+      { "languageCode": "en", "name": "Electrical safety", "description": "How to use electricity safely at home and at school." }
+    ]
+  },
+  {
+    "id": 4,
+    "name": "الثنائي الباعث للضوء",
+    "description": "كيف يعمل الـ LED ولماذا له طرف طويل وطرف قصير.",
+    "categoryId": 2,
+    "categoryName": "المكونات الإلكترونية",
+    "learningLevel": "Intermediate",
+    "isActive": true,
+    "questionsCount": 10,
+    "createdAt": "2026-08-01T10:00:00",
+    "updatedAt": null,
+    "translations": [
+      { "languageCode": "ar", "name": "الثنائي الباعث للضوء", "description": "كيف يعمل الـ LED ولماذا له طرف طويل وطرف قصير." },
+      { "languageCode": "en", "name": "The LED", "description": "How an LED works and why it has a long leg and a short leg." }
+    ]
+  },
+  {
+    "id": 5,
+    "name": "المقاومة",
+    "description": "لماذا نحتاج المقاومة في الدائرة وكيف نقرأ قيمتها.",
+    "categoryId": 2,
+    "categoryName": "المكونات الإلكترونية",
+    "learningLevel": "Intermediate",
+    "isActive": true,
+    "questionsCount": 7,
+    "createdAt": "2026-08-01T10:00:00",
+    "updatedAt": null,
+    "translations": [
+      { "languageCode": "ar", "name": "المقاومة", "description": "لماذا نحتاج المقاومة في الدائرة وكيف نقرأ قيمتها." },
+      { "languageCode": "en", "name": "The resistor", "description": "Why a circuit needs a resistor and how to read its value." }
+    ]
+  },
+  {
+    "id": 6,
+    "name": "زر الضغط",
+    "description": "كيف يفتح زر الضغط الدائرة ويغلقها.",
+    "categoryId": 2,
+    "categoryName": "المكونات الإلكترونية",
+    "learningLevel": "Intermediate",
+    "isActive": true,
+    "questionsCount": 4,
+    "createdAt": "2026-08-01T10:00:00",
+    "updatedAt": null,
+    "translations": [
+      { "languageCode": "ar", "name": "زر الضغط", "description": "كيف يفتح زر الضغط الدائرة ويغلقها." },
+      { "languageCode": "en", "name": "The push button", "description": "How a push button opens and closes a circuit." }
+    ]
+  }
+]

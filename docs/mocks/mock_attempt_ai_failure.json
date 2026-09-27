@@ -1,0 +1,18 @@
+{
+  "attemptId": 42,
+  "quizId": 15,
+  "completedAt": "2026-09-10T18:42:10.1234567Z",
+  "totalQuestions": 3,
+  "autoGradedQuestions": 3,
+  "pendingEssayQuestions": 0,
+  "essayResults": [],
+  "correctAnswers": 2,
+  "wrongAnswers": 1,
+  "scorePercentage": 50,
+  "totalPoints": 4,
+  "earnedPoints": 2,
+  "pendingPoints": 0,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "hintsStatus": "Unavailable"
+}

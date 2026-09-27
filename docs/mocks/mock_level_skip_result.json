@@ -1,0 +1,40 @@
+{
+  "attemptId": 71,
+  "quizId": 31,
+  "completedAt": "2026-09-21T10:02:31.4120000Z",
+  "totalQuestions": 10,
+  "autoGradedQuestions": 10,
+  "pendingEssayQuestions": 0,
+  "essayResults": [],
+  "correctAnswers": 9,
+  "wrongAnswers": 1,
+  "scorePercentage": 90.00,
+  "totalPoints": 10,
+  "earnedPoints": 9,
+  "pendingPoints": 0,
+  "language": "ar",
+  "languageFallbackApplied": false,
+  "hintsStatus": "NotRequired",
+  "levelSkip": {
+    "levelId": 2,
+    "passed": true,
+    "heartsAllowed": 3,
+    "heartsRemaining": 2,
+    "wrongAnswers": 1,
+    "scorePercentage": 90.00,
+    "passPercentage": 80,
+    "lessonsCompleted": 4
+  },
+  "rewards": {
+    "sparksEarned": 25,
+    "sparksBalance": 170,
+    "currentStreakDays": 4,
+    "longestStreakDays": 9,
+    "streakExtendedToday": true,
+    "freezesSpent": 0,
+    "freezesAvailable": 1,
+    "lines": [
+      { "reason": "LevelSkipPassed", "sparks": 25, "message": "‏+25 شرارة لتخطي المستوى" }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "الجرس الكهربي",
+  "description": "كيف يُصدر الجرس صوتًا عندما يمر فيه التيار.",
+  "categoryId": 2,
+  "learningLevel": "Intermediate",
+  "translations": [
+    { "languageCode": "ar", "name": "الجرس الكهربي", "description": "كيف يُصدر الجرس صوتًا عندما يمر فيه التيار." },
+    { "languageCode": "en", "name": "The buzzer", "description": "How a buzzer makes a sound when current flows through it." }
+  ]
+}

@@ -8,7 +8,7 @@ public class LocalImageStorageService : IImageStorageService
 {
     private static readonly string[] AllowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
     private const long MaxFileSizeBytes = 5 * 1024 * 1024; // 5MB
-    private const string UploadsFolder = "uploads/lessons";
+    internal const string UploadsFolder = "uploads/lessons";
 
     private readonly IWebHostEnvironment _environment;
 

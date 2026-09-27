@@ -1,0 +1,157 @@
+{
+  "language": "ar",
+  "totalXp": 23,
+  "totalTopics": 6,
+  "topicsStarted": 3,
+  "topicsMastered": 1,
+  "questionsAnswered": 26,
+  "correctAnswers": 21,
+  "accuracyPercentage": 81,
+  "hintsUsed": 2,
+  "message": "أحسنت! جمعت 23 من نقاط الخبرة وأتقنت 1 من أصل 6 من المواضيع. واصل التقدّم!",
+  "categories": [
+    {
+      "categoryId": 1,
+      "name": "أساسيات الكهرباء",
+      "xp": 15,
+      "totalTopics": 3,
+      "topicsStarted": 2,
+      "topicsMastered": 1,
+      "topics": [
+        {
+          "topicId": 1,
+          "name": "مفهوم الكهرباء",
+          "description": "ما هي الكهرباء وأين نستخدمها في حياتنا.",
+          "categoryId": 1,
+          "categoryName": "أساسيات الكهرباء",
+          "learningLevel": "Beginner",
+          "mastery": "Mastered",
+          "stars": 3,
+          "xp": 13,
+          "questionsAnswered": 13,
+          "correctAnswers": 13,
+          "wrongAnswers": 0,
+          "accuracyPercentage": 100,
+          "hintsUsed": 0,
+          "lastPracticedAt": "2026-09-08T17:15:42.517",
+          "message": "مذهل! لقد أتقنت هذا الموضوع، أنت بطل الكهرباء.",
+          "difficulties": [
+            { "difficulty": "Easy", "xp": 8, "questionsAnswered": 8, "correctAnswers": 8, "wrongAnswers": 0, "accuracyPercentage": 100, "hintsUsed": 0 },
+            { "difficulty": "Medium", "xp": 5, "questionsAnswered": 5, "correctAnswers": 5, "wrongAnswers": 0, "accuracyPercentage": 100, "hintsUsed": 0 }
+          ]
+        },
+        {
+          "topicId": 2,
+          "name": "الدائرة الكهربية",
+          "description": "الدائرة المغلقة والمفتوحة ولماذا يضيء المصباح.",
+          "categoryId": 1,
+          "categoryName": "أساسيات الكهرباء",
+          "learningLevel": "Beginner",
+          "mastery": "Learning",
+          "stars": 1,
+          "xp": 2,
+          "questionsAnswered": 3,
+          "correctAnswers": 1,
+          "wrongAnswers": 2,
+          "accuracyPercentage": 33,
+          "hintsUsed": 0,
+          "lastPracticedAt": "2026-09-09T16:05:31.873",
+          "message": "بداية رائعة! كل سؤال تجيب عنه يقرّبك من إتقان هذا الموضوع.",
+          "difficulties": [
+            { "difficulty": "Easy", "xp": 1, "questionsAnswered": 3, "correctAnswers": 1, "wrongAnswers": 2, "accuracyPercentage": 33, "hintsUsed": 0 },
+            { "difficulty": "Medium", "xp": 1, "questionsAnswered": 0, "correctAnswers": 0, "wrongAnswers": 0, "accuracyPercentage": 0, "hintsUsed": 0 }
+          ]
+        },
+        {
+          "topicId": 3,
+          "name": "السلامة الكهربية",
+          "description": "كيف نتعامل مع الكهرباء بأمان في البيت والمدرسة.",
+          "categoryId": 1,
+          "categoryName": "أساسيات الكهرباء",
+          "learningLevel": "Beginner",
+          "mastery": "NotStarted",
+          "stars": 0,
+          "xp": 0,
+          "questionsAnswered": 0,
+          "correctAnswers": 0,
+          "wrongAnswers": 0,
+          "accuracyPercentage": 0,
+          "hintsUsed": 0,
+          "lastPracticedAt": null,
+          "message": "موضوع جديد في انتظارك! ابدأ أول اختبار فيه لتجمع نقاط الخبرة.",
+          "difficulties": []
+        }
+      ]
+    },
+    {
+      "categoryId": 2,
+      "name": "المكونات الإلكترونية",
+      "xp": 7,
+      "totalTopics": 3,
+      "topicsStarted": 1,
+      "topicsMastered": 0,
+      "topics": [
+        {
+          "topicId": 4,
+          "name": "الثنائي الباعث للضوء",
+          "description": "كيف يعمل الـ LED ولماذا له طرف طويل وطرف قصير.",
+          "categoryId": 2,
+          "categoryName": "المكونات الإلكترونية",
+          "learningLevel": "Intermediate",
+          "mastery": "Practicing",
+          "stars": 2,
+          "xp": 7,
+          "questionsAnswered": 10,
+          "correctAnswers": 7,
+          "wrongAnswers": 3,
+          "accuracyPercentage": 70,
+          "hintsUsed": 2,
+          "lastPracticedAt": "2026-09-10T18:42:10.123",
+          "message": "أنت تتقدّم بسرعة! راجع الأسئلة التي أخطأت فيها لتتقن هذا الموضوع.",
+          "difficulties": [
+            { "difficulty": "Easy", "xp": 6, "questionsAnswered": 8, "correctAnswers": 6, "wrongAnswers": 2, "accuracyPercentage": 75, "hintsUsed": 2 },
+            { "difficulty": "Medium", "xp": 1, "questionsAnswered": 2, "correctAnswers": 1, "wrongAnswers": 1, "accuracyPercentage": 50, "hintsUsed": 0 }
+          ]
+        },
+        {
+          "topicId": 5,
+          "name": "المقاومة",
+          "description": "لماذا نحتاج المقاومة في الدائرة وكيف نقرأ قيمتها.",
+          "categoryId": 2,
+          "categoryName": "المكونات الإلكترونية",
+          "learningLevel": "Intermediate",
+          "mastery": "NotStarted",
+          "stars": 0,
+          "xp": 0,
+          "questionsAnswered": 0,
+          "correctAnswers": 0,
+          "wrongAnswers": 0,
+          "accuracyPercentage": 0,
+          "hintsUsed": 0,
+          "lastPracticedAt": null,
+          "message": "موضوع جديد في انتظارك! ابدأ أول اختبار فيه لتجمع نقاط الخبرة.",
+          "difficulties": []
+        },
+        {
+          "topicId": 6,
+          "name": "زر الضغط",
+          "description": "كيف يفتح زر الضغط الدائرة ويغلقها.",
+          "categoryId": 2,
+          "categoryName": "المكونات الإلكترونية",
+          "learningLevel": "Intermediate",
+          "mastery": "NotStarted",
+          "stars": 0,
+          "xp": 0,
+          "questionsAnswered": 0,
+          "correctAnswers": 0,
+          "wrongAnswers": 0,
+          "accuracyPercentage": 0,
+          "hintsUsed": 0,
+          "lastPracticedAt": null,
+          "message": "موضوع جديد في انتظارك! ابدأ أول اختبار فيه لتجمع نقاط الخبرة.",
+          "difficulties": []
+        }
+      ]
+    }
+  ]
+}

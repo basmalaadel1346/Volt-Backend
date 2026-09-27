@@ -9,6 +9,9 @@ public static class ClaimsPrincipalExtensions
 {
     public static Guid GetUserId(this ClaimsPrincipal user)
     {
+        // Deliberately InvalidOperationException, not BusinessRuleException: every
+        // token this API issues carries sub, so a missing one is a server-side
+        // fault (wrong auth scheme or token generator) — a 500, not a 400.
         var idValue = user.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
             ?? throw new InvalidOperationException("الـ Token مايحتويش على Claim الـ Sub (UserId)");
 

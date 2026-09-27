@@ -96,9 +96,15 @@ public class LessonService : ILessonService
             .ToList();
 
         var response = new LessonDetailResponse(
-            lesson.Id, lesson.LevelId, lesson.Title, lesson.Description,
-            lesson.SortOrder, lesson.IsPublished, lesson.CreatedAt, contents);
-
+    lesson.Id,
+    lesson.LevelId,
+    lesson.Title,
+    lesson.Description,
+    lesson.SortOrder,
+    lesson.IsPublished,
+    lesson.LessonType.Name,
+    lesson.CreatedAt,
+    contents);
         return Result<LessonDetailResponse>.Success(response);
     }
 
@@ -213,9 +219,14 @@ public class LessonService : ILessonService
     }
 
     private static LessonSummaryResponse ToSummary(Lesson lesson) => new(
-        lesson.Id, lesson.LevelId, lesson.Title, lesson.Description,
-        lesson.SortOrder, lesson.IsPublished, lesson.CreatedAt);
-
+        lesson.Id,
+        lesson.LevelId,
+        lesson.Title,
+        lesson.Description,
+        lesson.SortOrder,
+        lesson.IsPublished,
+        lesson.LessonType.Name,
+        lesson.CreatedAt);
     // جدول LessonTypes مخزّن فيه القيم بـ PascalCase ("Lesson", "FinalLevelQuiz") لأنه Lookup Table
     // إداري، لكن الفلاتر متفقة على camelCase ("lesson", "finalLevelQuiz") في الـ API. بدل ما نربط
     // الكود بحساسية أحرف الداتابيز (لو اتغيّرت أو اتضاف نوع جديد هيبوظ)، بنحوّل أول حرف لصغير هنا

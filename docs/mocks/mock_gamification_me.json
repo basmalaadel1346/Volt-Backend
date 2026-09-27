@@ -1,0 +1,27 @@
+{
+  "language": "ar",
+  "sparksBalance": 145,
+  "lifetimeSparks": 320,
+  "currentStreakDays": 4,
+  "longestStreakDays": 9,
+  "lastActivityOn": "2026-09-21",
+  "activeToday": true,
+  "streakSafeForDays": 2,
+  "streakFreezes": 1,
+  "maxStreakFreezes": 2,
+  "streakFreezesUsed": 3,
+  "daysToNextMilestone": 3,
+  "milestoneSparks": 50,
+  "message": "‏4 أيام متتالية، واصل! باقي 3 أيام على صندوق المكافأة التالي.",
+  "items": [
+    {
+      "itemId": 1,
+      "code": "streak_freeze",
+      "kind": "StreakFreeze",
+      "name": "تجميد السلسلة",
+      "quantity": 1,
+      "isEquipped": false
+    }
+  ],
+  "activeBoosts": []
+}

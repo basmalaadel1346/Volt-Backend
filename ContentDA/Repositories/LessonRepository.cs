@@ -18,10 +18,10 @@ public class LessonRepository : ILessonRepository
 
     public Task<Lesson?> GetWithContentsAsync(int id, CancellationToken ct = default) =>
         _context.Lessons
+            .Include(l => l.LessonType)
             .Include(l => l.LessonContents.OrderBy(c => c.SortOrder))
             .ThenInclude(c => c.ContentType)
             .FirstOrDefaultAsync(l => l.Id == id, ct);
-
     public async Task<int> GetMaxSortOrderAsync(int levelId, CancellationToken ct = default)
     {
         var query = _context.Lessons.Where(l => l.LevelId == levelId);

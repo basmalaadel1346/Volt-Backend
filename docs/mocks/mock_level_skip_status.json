@@ -1,0 +1,10 @@
+{
+  "levelId": 2,
+  "status": "Available",
+  "quizId": 31,
+  "questionCount": 10,
+  "timeLimitSeconds": 180,
+  "hearts": 3,
+  "passPercentage": 80,
+  "previousAttempts": 0
+}

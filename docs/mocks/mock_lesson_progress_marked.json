@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "message": "تم تسجيل إكمال الدرس بنجاح",
+  "data": {
+    "lessonId": 5,
+    "completedAt": "2026-09-21T14:00:00Z",
+    "rewards": {
+      "sparksEarned": 5,
+      "sparksBalance": 150,
+      "currentStreakDays": 5,
+      "longestStreakDays": 9,
+      "streakExtendedToday": true,
+      "freezesSpent": 0,
+      "freezesAvailable": 1,
+      "lines": [
+        { "reason": "LessonCompleted", "sparks": 5, "message": "‏+5 شرارة لإنهاء الدرس" }
+      ]
+    }
+  }
+}

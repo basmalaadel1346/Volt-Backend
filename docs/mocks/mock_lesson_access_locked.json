@@ -1,0 +1,13 @@
+{
+  "success": true,
+  "message": "تمت العملية بنجاح",
+  "data": {
+    "lessonId": 6,
+    "isUnlocked": false,
+    "isCompleted": false,
+    "requiredLessonId": 5,
+    "requiredLessonTitle": "ما هي الكهرباء",
+    "reason": "PreviousLessonQuizNotPassed",
+    "message": "لازم تنجح في اختبار درس \"ما هي الكهرباء\" الأول عشان تفتح الدرس ده."
+  }
+}

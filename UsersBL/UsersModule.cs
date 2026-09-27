@@ -24,7 +24,8 @@ public static class UsersModule
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();
-
+        services.AddScoped<UsersBL.Services.LearnerProfileService>();
+        services.AddScoped<Shared.Users.ILearnerProfile, UsersBL.Services.LearnerProfileService>();
         return services;
     }
 }

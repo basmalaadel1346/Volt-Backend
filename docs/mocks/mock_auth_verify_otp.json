@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "message": "الكود صحيح",
+  "data": {
+    "resetToken": "BI82GaehjARpd/yQz92c8ZodwSGhBBVl2GBxHsk8r3wFT0cKRQEZgDCXHbmF5z0vAhqcDHPJl/T8Yf8yiewPgQ==",
+    "resetTokenExpiresAt": "2026-09-10T12:10:00.2749381Z"
+  }
+}

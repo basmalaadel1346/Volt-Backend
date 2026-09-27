@@ -1,4 +1,4 @@
-using ContentBL.Interfaces;
+﻿using ContentBL.Interfaces;
 using ContentBL.Services;
 using ContentDA;
 using ContentDA.Context;
@@ -30,7 +30,11 @@ public static class ContentModule
         services.AddScoped<ILessonContentService, LessonContentService>();
         services.AddScoped<ILearningProgressService, LearningProgressService>();
         services.AddScoped<IImageStorageService, LocalImageStorageService>();
-
+        services.AddScoped<LessonAvailabilityService>();
+        services.AddScoped<Shared.Content.ILessonAvailability>(sp => sp.GetRequiredService<LessonAvailabilityService>());
+        services.AddScoped<Shared.Content.ILessonProgressWriter>(sp => sp.GetRequiredService<LessonAvailabilityService>());
+        services.AddScoped<Shared.Content.ILevelCatalog, LevelCatalogService>();
+        services.AddScoped<Shared.Content.IMediaContentReader, LocalMediaContentReader>();
         return services;
     }
 }

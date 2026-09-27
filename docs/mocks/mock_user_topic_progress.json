@@ -1,0 +1,38 @@
+{
+  "topicId": 4,
+  "name": "الثنائي الباعث للضوء",
+  "description": "كيف يعمل الـ LED ولماذا له طرف طويل وطرف قصير.",
+  "categoryId": 2,
+  "categoryName": "المكونات الإلكترونية",
+  "learningLevel": "Intermediate",
+  "mastery": "Practicing",
+  "stars": 2,
+  "xp": 7,
+  "questionsAnswered": 10,
+  "correctAnswers": 7,
+  "wrongAnswers": 3,
+  "accuracyPercentage": 70,
+  "hintsUsed": 2,
+  "lastPracticedAt": "2026-09-10T18:42:10.123",
+  "message": "أنت تتقدّم بسرعة! راجع الأسئلة التي أخطأت فيها لتتقن هذا الموضوع.",
+  "difficulties": [
+    {
+      "difficulty": "Easy",
+      "xp": 6,
+      "questionsAnswered": 8,
+      "correctAnswers": 6,
+      "wrongAnswers": 2,
+      "accuracyPercentage": 75,
+      "hintsUsed": 2
+    },
+    {
+      "difficulty": "Medium",
+      "xp": 1,
+      "questionsAnswered": 2,
+      "correctAnswers": 1,
+      "wrongAnswers": 1,
+      "accuracyPercentage": 50,
+      "hintsUsed": 0
+    }
+  ]
+}

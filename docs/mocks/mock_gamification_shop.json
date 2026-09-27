@@ -1,0 +1,39 @@
+[
+  {
+    "itemId": 1,
+    "code": "streak_freeze",
+    "kind": "StreakFreeze",
+    "name": "تجميد السلسلة",
+    "description": "بيحمي سلسلتك لو نسيت تدخل يوم. بيتستخدم لوحده أول ما ترجع.",
+    "priceSparks": 200,
+    "owned": 1,
+    "maxOwned": 2,
+    "canAfford": false,
+    "atMaxOwned": false
+  },
+  {
+    "itemId": 2,
+    "code": "double_xp_15",
+    "kind": "Boost",
+    "name": "نقاط خبرة مضاعفة",
+    "description": "نقاط خبرة مضاعفة لمدة ١٥ دقيقة. بيبدأ أول ما تشتريه.",
+    "priceSparks": 120,
+    "owned": 0,
+    "boostMultiplier": 2,
+    "boostMinutes": 15,
+    "canAfford": true,
+    "atMaxOwned": false
+  },
+  {
+    "itemId": 3,
+    "code": "avatar_robot_helmet",
+    "kind": "Avatar",
+    "name": "خوذة الروبوت",
+    "description": "خوذة روبوت لشخصيتك في اللعبة.",
+    "priceSparks": 150,
+    "owned": 0,
+    "maxOwned": 1,
+    "canAfford": false,
+    "atMaxOwned": false
+  }
+]

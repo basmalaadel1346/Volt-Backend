@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace ContentBL.DTOs;
 
@@ -19,3 +19,6 @@ public record UpdateLessonContentRequest(
     [StringLength(500, ErrorMessage = "رابط الصورة أطول من اللازم")] string? MediaUrl);
 
 public record SwapLessonContentsOrderRequest(int FirstContentId, int SecondContentId);
+
+/// <summary>الترتيب الجديد لعناصر محتوى درس معيّن: قايمة الـ IDs من الأول للآخر.</summary>
+public record ReorderLessonContentsRequest(List<int> OrderedIds);
